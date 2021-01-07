@@ -1,0 +1,6 @@
+__pycache__
+*.pyc
+/.mypy_cache
+/.vscode
+/pyproject.toml
+/vast_xmatch.egg-info
