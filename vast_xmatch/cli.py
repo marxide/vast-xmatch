@@ -276,19 +276,19 @@ def vast_xmatch_qc(
         else:
             f = open(csv_output_path, "a")
         logger.info(
-            (
                 "Writing corrections CSV. To correct positions, add the corrections to "
                 "the original source positions i.e. RA' = RA + ra_correction. To correct "
                 "fluxes, add the additive correction and multiply the result by the "
                 "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
                 "(S + flux_peak_correction_additive)."
             )
-        )
+        flux_corr_mult = 1 / ugradient
+        flux_corr_add = -1 * uoffset
         print(
             (
                 f"{parts['field']},{parts['epoch']},{sbid},{dra_median * -1},"
-                f"{ddec_median * -1},{dra_madfm},{ddec_madfm},{gradient},{offset},"
-                f"{gradient_err},{offset_err}"
+                f"{ddec_median * -1},{dra_madfm},{ddec_madfm},{flux_corr_mult.nominal_value},"
+                f"{flux_corr_add.nominal_value},{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
             ),
             file=f,
         )
