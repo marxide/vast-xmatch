@@ -5,12 +5,28 @@ from typing import Tuple, Union, Dict
 from urllib.parse import quote
 
 from astropy.coordinates import SkyCoord
-from astropy.table import QTable
+from astropy.table import QTable, join
 import astropy.units as u
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+SELAVY_COLUMN_UNITS = {
+    "ra_deg_cont": u.deg,
+    "dec_deg_cont": u.deg,
+    "ra_err": u.arcsec,
+    "dec_err": u.arcsec,
+    "flux_peak": u.mJy / u.beam,
+    "flux_peak_err": u.mJy / u.beam,
+    "maj_axis": u.arcsec,
+    "maj_axis_err": u.arcsec,
+    "min_axis": u.arcsec,
+    "min_axis_err": u.arcsec,
+    "pos_ang": u.deg,
+    "pos_ang_err": u.deg,
+    "rms_image": u.mJy / u.beam,
+}
 
 
 class UnknownFilenameConvention(Exception):
@@ -21,23 +37,10 @@ class MetadataNotFound(Exception):
     pass
 
 
-def _convert_selavy_columns_to_quantites(qt: QTable) -> QTable:
-    COLUMN_UNITS = {
-        "ra_deg_cont": u.deg,
-        "dec_deg_cont": u.deg,
-        "ra_err": u.arcsec,
-        "dec_err": u.arcsec,
-        "flux_peak": u.mJy / u.beam,
-        "flux_peak_err": u.mJy / u.beam,
-        "maj_axis": u.arcsec,
-        "maj_axis_err": u.arcsec,
-        "min_axis": u.arcsec,
-        "min_axis_err": u.arcsec,
-        "pos_ang": u.deg,
-        "pos_ang_err": u.deg,
-        "rms_image": u.mJy / u.beam,
-    }
-    for col, unit in COLUMN_UNITS.items():
+def _convert_selavy_columns_to_quantites(
+    qt: QTable, units: Dict[str, u.Unit] = SELAVY_COLUMN_UNITS
+) -> QTable:
+    for col, unit in units.items():
         qt[col].unit = unit
     return qt
 
@@ -156,6 +159,64 @@ def read_hdf(catalog_path: Path) -> pd.DataFrame:
     df = pd.read_hdf(catalog_path, key="data")
     df["field"] = df.field.str.split(".", n=1, expand=True)[0]
     qt = _convert_selavy_columns_to_quantites(QTable.from_pandas(df))
+    qt["coord"] = SkyCoord(ra=qt["ra_deg_cont"], dec=qt["dec_deg_cont"])
+    _, qt["nn_separation"], _ = qt["coord"].match_to_catalog_sky(
+        qt["coord"], nthneighbor=2
+    )
+    return qt
+
+
+def read_aegean_csv(catalog_path: Path) -> QTable:
+    """Read an Aegean CSV component catalog and return a QTable.
+    Assumed to contain at least the following columns with the given units:
+        - `ra` and `dec`: degrees.
+        - `err_ra` and `err_dec`: degrees.
+        - `peak_flux` and `err_peak_flux`: Jy/beam.
+        - `a`, `err_a`, `b`, `err_b`: fitted semi-major and -minor axes in arcseconds.
+        - `pa` and `err_pa`: degrees.
+        - `local_rms`: Jy/beam.
+    These columns will be converted to Astropy quantites assuming the above units.
+
+    Parameters
+    ----------
+    catalog_path : Path
+        Path to the Selavy catalog file.
+
+    Returns
+    -------
+    QTable
+        Aegean component catalog as a QTable, with extra columns:
+        - `coord`: `SkyCoord` object of the source coordinate.
+        - `nn_separation`: separation to the nearest-neighbour source as a Quantity with
+            angular units.
+    """
+    AEGEAN_COLUMN_MAP = {
+        # aegean name: (selavy name, aegean unit)
+        "ra": ("ra_deg_cont", u.deg),
+        "dec": ("dec_deg_cont", u.deg),
+        "err_ra": ("ra_err", u.deg),
+        "err_dec": ("dec_err", u.deg),
+        "peak_flux": ("flux_peak", u.Jy / u.beam),
+        "err_peak_flux": ("flux_peak_err", u.Jy / u.beam),
+        "a": ("maj_axis", u.arcsec),
+        "b": ("min_axis", u.arcsec),
+        "pa": ("pos_ang", u.arcsec),
+        "err_a": ("maj_axis_err", u.arcsec),
+        "err_b": ("min_axis_err", u.deg),
+        "err_pa": ("pos_ang_err", u.deg),
+        "local_rms": ("rms_image", u.Jy / u.beam),
+    }
+    qt = QTable.read(catalog_path)
+    # rename columns to match selavy convention and assign units
+    for col, (new_col, unit) in AEGEAN_COLUMN_MAP.items():
+        qt.rename_column(col, new_col)
+        qt[new_col].unit = unit
+    # add has_siblings column
+    island_source_counts = qt[["island", "source"]].group_by("island").groups.aggregate(np.sum)
+    island_source_counts.rename_column("source", "has_siblings")
+    island_source_counts["has_siblings"] = island_source_counts["has_siblings"].astype(bool)
+    qt = join(qt, island_source_counts, keys="island", join_type="left")
+
     qt["coord"] = SkyCoord(ra=qt["ra_deg_cont"], dec=qt["dec_deg_cont"])
     _, qt["nn_separation"], _ = qt["coord"].match_to_catalog_sky(
         qt["coord"], nthneighbor=2

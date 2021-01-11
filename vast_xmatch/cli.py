@@ -11,6 +11,7 @@ import pandas as pd
 from uncertainties import ufloat
 
 from vast_xmatch.catalogs import (
+    read_aegean_csv,
     read_selavy,
     calculate_condon_flux_errors,
     get_psf_size_from_metadata_server,
@@ -103,6 +104,8 @@ def common_options(function):
         ),
     )(function)
     function = click.option("-v", "--verbose", is_flag=True)(function)
+    function = click.option("--aegean", is_flag=True, help="Input catalog is an Aegean CSV.")(function)
+
     return function
 
 
@@ -115,6 +118,7 @@ def vast_xmatch_selavy(
     psf_reference: Optional[Tuple[float, float]] = None,
     psf: Optional[Tuple[float, float]] = None,
     verbose: bool = False,
+    aegean: bool = False,
 ) -> QTable:
     if verbose:
         logger.setLevel(logging.DEBUG)
@@ -183,6 +187,9 @@ def vast_xmatch_selavy(
         )
 
     reference_catalog_qt = read_selavy(reference_catalog)
+    if aegean:
+        catalog_qt = read_aegean_csv(catalog)
+    else:
     catalog_qt = read_selavy(catalog)
 
     # compute Condon (1997) flux errors
@@ -226,7 +233,6 @@ def vast_xmatch_qc(
     csv_output: Optional[str] = None,
     **kwargs,
 ):
-    print("TEST")
     data = vast_xmatch_selavy(**kwargs)
 
     # calculate positional offsets and flux ratio
