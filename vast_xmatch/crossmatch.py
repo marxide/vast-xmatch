@@ -62,7 +62,7 @@ def crossmatch_qtables(
     xmatch["dra"], xmatch["ddec"] = xmatch["coord_reference"].spherical_offsets_to(
         xmatch["coord"]
     )
-    xmatch["flux_peak_ratio"] = xmatch["flux_peak"] / xmatch["flux_peak_reference"]
+    xmatch["flux_peak_ratio"] = (xmatch["flux_peak"] / xmatch["flux_peak_reference"]).decompose()
 
     logger.info(
         "Num cross-matches: %d. Num cross-matches to unique reference source: %d (%d%%).",
