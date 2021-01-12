@@ -5,7 +5,6 @@ from typing import Optional, Tuple, Union
 from astropy.coordinates import Angle
 import astropy.units as u
 import click
-import pandas as pd
 from uncertainties import ufloat
 
 from vast_xmatch.catalogs import Catalog, UnknownFilenameConvention
@@ -14,6 +13,7 @@ from vast_xmatch.crossmatch import (
     calculate_positional_offsets,
     calculate_flux_offsets,
 )
+from vast_xmatch.plot import positional_offset_plot, flux_ratio_plot
 
 
 class _AstropyUnitType(click.ParamType):
@@ -152,6 +152,17 @@ def _transform_epoch_vastp(epoch: str) -> str:
         "and are different from the fitted values shown in the logs."
     ),
 )
+@click.option(
+    "--plot-path",
+    type=click.Path(),
+    help=(
+        "Save plots of the crossmatched sources positional offsets and flux ratios as a "
+        "PNG image to the given directory. If the directory does not exist, it will be "
+        "created. The axis units are specified by --positional-unit and --flux-unit. "
+        "The output filenames will be the name of the input catalog with the suffix "
+        "_positional_offset.png and _flux_ratio.png."
+    ),
+)
 def vast_xmatch_qc(
     reference_catalog_path: Union[Path, str],
     catalog_path: Union[Path, str],
@@ -163,7 +174,8 @@ def vast_xmatch_qc(
     aegean: bool = False,
     positional_unit: str = "arcsec",
     flux_unit: str = "mJy",
-    csv_output: Optional[str] = None,
+    csv_output: Optional[Union[Path, str]] = None,
+    plot_path: Optional[Union[Path, str]] = None,
 ):
     if verbose:
         logger.setLevel(logging.DEBUG)
@@ -177,6 +189,7 @@ def vast_xmatch_qc(
         psf_reference = None
     if isinstance(psf, tuple) and len(psf) == 0:
         psf = None
+    flux_unit /= u.beam
 
     reference_catalog = Catalog(
         reference_catalog_path, psf=psf_reference, condon=condon
@@ -212,42 +225,33 @@ def vast_xmatch_qc(
     )
 
     # calculate positional offsets and flux ratio
-    df = pd.DataFrame(
-        {
-            "dra": data["dra"].to(positional_unit),
-            "ddec": data["ddec"].to(positional_unit),
-            "flux_peak": data["flux_peak"].to(flux_unit / u.beam),
-            "flux_peak_err": data["flux_peak_err"].to(flux_unit / u.beam),
-            "flux_peak_reference": data["flux_peak_reference"].to(flux_unit / u.beam),
-            "flux_peak_err_reference": data["flux_peak_err_reference"].to(
-                flux_unit / u.beam
-            ),
-            "flux_peak_ratio": data["flux_peak_ratio"],
-        }
-    )
-    dra_median, ddec_median, dra_madfm, ddec_madfm = calculate_positional_offsets(df)
+    dra_median, ddec_median, dra_madfm, ddec_madfm = calculate_positional_offsets(data)
+    dra_median_value = dra_median.to(positional_unit).value
+    dra_madfm_value = dra_madfm.to(positional_unit).value
+    ddec_median_value = ddec_median.to(positional_unit).value
+    ddec_madfm_value = ddec_madfm.to(positional_unit).value
     logger.info(
         "dRA median: %.2f MADFM: %.2f %s. dDec median: %.2f MADFM: %.2f %s.",
-        dra_median,
-        dra_madfm,
+        dra_median_value,
+        dra_madfm_value,
         positional_unit,
-        ddec_median,
-        ddec_madfm,
+        ddec_median_value,
+        ddec_madfm_value,
         positional_unit,
     )
 
-    gradient, offset, gradient_err, offset_err = calculate_flux_offsets(df)
+    gradient, offset, gradient_err, offset_err = calculate_flux_offsets(data)
     ugradient = ufloat(gradient, gradient_err)
-    uoffset = ufloat(offset, offset_err)
+    uoffset = ufloat(offset.to(flux_unit).value, offset_err.to(flux_unit).value)
     logger.info(
         "ODR fit parameters: Sp = Sp,ref * %s + %s %s.", ugradient, uoffset, flux_unit
     )
 
     if csv_output is not None:
-        csv_output_path = Path(csv_output)
+        csv_output = Path(csv_output)  # ensure Path object
         sbid = catalog.sbid if catalog.sbid is not None else ""
-        if not csv_output_path.exists():
-            f = open(csv_output_path, "w")
+        if not csv_output.exists():
+            f = open(csv_output, "w")
             print(
                 (
                     "field,release_epoch,sbid,ra_correction,dec_correction,ra_madfm,"
@@ -257,7 +261,7 @@ def vast_xmatch_qc(
                 file=f,
             )
         else:
-            f = open(csv_output_path, "a")
+            f = open(csv_output, "a")
         logger.info(
             "Writing corrections CSV. To correct positions, add the corrections to "
             "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
@@ -269,10 +273,46 @@ def vast_xmatch_qc(
         flux_corr_add = -1 * uoffset
         print(
             (
-                f"{catalog.field},{catalog.epoch},{sbid},{dra_median * -1},"
-                f"{ddec_median * -1},{dra_madfm},{ddec_madfm},{flux_corr_mult.nominal_value},"
-                f"{flux_corr_add.nominal_value},{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
+                f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
+                f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
+                f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
+                f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
             ),
             file=f,
         )
         f.close()
+
+    if plot_path is not None:
+        plot_path = Path(plot_path)  # ensure Path object
+        title: Optional[str] = None
+        if (
+            catalog.field
+            and catalog.epoch
+            and reference_catalog.field
+            and reference_catalog.epoch
+        ):
+            title = (
+                f"{catalog.field}.{catalog.epoch} X {reference_catalog.field}."
+                f"{reference_catalog.epoch}"
+            )
+        g_pos_offset = positional_offset_plot(
+            data,
+            title=title,
+            unit=positional_unit,
+            offsets=(dra_median, ddec_median, dra_madfm, ddec_madfm),
+        )
+        g_pos_offset.savefig(
+            plot_path / f"{catalog.path.stem}_positional_offset.png",
+            bbox_inches="tight",
+        )
+
+        ax_flux_ratio = flux_ratio_plot(
+            data,
+            title=title,
+            unit=flux_unit,
+            fit_params=(gradient, offset, gradient_err, offset_err),
+        )
+        ax_flux_ratio.figure.savefig(
+            plot_path / f"{catalog.path.stem}_flux_ratio.png",
+            bbox_inches="tight",
+        )

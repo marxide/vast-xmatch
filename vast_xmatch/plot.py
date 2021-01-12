@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 
 from astropy.coordinates import Angle
 from astropy.table import QTable
+import astropy.units as u
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -25,7 +26,7 @@ def positional_offset_plot(
     title: Optional[str] = None,
     unit: str = "arcsec",
     pixel_size: Optional[Angle] = Angle("2.5arcsec"),
-    offsets: Optional[Tuple[float, float, float, float]] = None,
+    offsets: Optional[Tuple[u.Quantity, u.Quantity, u.Quantity, u.Quantity]] = None,
 ) -> sns.JointGrid:
     """Plot the positional offsets of crossmatched sources.
 
@@ -41,26 +42,50 @@ def positional_offset_plot(
     pixel_size : Optional[Angle], optional
         Angular pixel size of the cataog source images. When supplied, the plot will
         contain a patch of this size centered at 0,0. Default Angle("2.5arcsec")
-    offsets : Optional[Tuple[float, float, float, float]], optional
-        Tuple of floats (dRA median, dDec median, dRA MADFM, dDec MADFM) in units of
-        `unit`. If `None`, these values will be calculated. Default None
+    offsets : Optional[Tuple[u.Quantity, u.Quantity, u.Quantity, u.Quantity]], optional
+        Tuple of Quantity objects of angular unit type (dRA median, dDec median,
+        dRA MADFM, dDec MADFM). If `None`, these values will be calculated. Default None.
 
     Returns
     -------
     sns.JointGrid
     """
+    if offsets is None:
+        dra_median, ddec_median, dra_madfm, ddec_madfm = calculate_positional_offsets(
+            xmatch_qt
+        )
+        logger.info(
+            "dRA median: %.2f MADFM: %.2f %s. dDec median: %.2f MADFM: %.2f %s.",
+            dra_median.to(unit).value,
+            dra_madfm.to(unit).value,
+            unit,
+            ddec_median.to(unit).value,
+            ddec_madfm.to(unit).value,
+            unit,
+        )
+    else:
+        dra_median, ddec_median, dra_madfm, ddec_madfm = offsets
+    dra_median_value = dra_median.to(unit).value
+    dra_madfm_value = dra_madfm.to(unit).value
+    ddec_median_value = ddec_median.to(unit).value
+    ddec_madfm_value = ddec_madfm.to(unit).value
+
     # seaborn expects a Pandas DataFrame
     df = pd.DataFrame(
         {
-            "dra": xmatch_qt["dra"].to(unit),
-            "ddec": xmatch_qt["ddec"].to(unit),
+            "dra": xmatch_qt["dra"].to(unit).value,
+            "ddec": xmatch_qt["ddec"].to(unit).value,
         }
     )
+    data_min = min(df.dra.min(), df.ddec.min())
+    data_max = max(df.dra.max(), df.ddec.max())
     g = sns.jointplot(
         x="dra",
         y="ddec",
         data=df,
         kind="hex",
+        xlim=(data_min, data_max),
+        ylim=(data_min, data_max),
         joint_kws=dict(
             gridsize=50,
             bins=10,
@@ -69,38 +94,22 @@ def positional_offset_plot(
     )
     g.set_axis_labels(f"∆RA ({unit})", f"∆Dec ({unit})")
 
-    if offsets is None:
-        dra_median, ddec_median, dra_madfm, ddec_madfm = calculate_positional_offsets(
-            df
-        )
-    else:
-        dra_median, ddec_median, dra_madfm, ddec_madfm = offsets
-    logger.info(
-        "dRA median: %.2f MADFM: %.2f %s. dDec median: %.2f MADFM: %.2f %s.",
-        dra_median,
-        dra_madfm,
-        unit,
-        ddec_median,
-        ddec_madfm,
-        unit,
-    )
-
     median_style = dict(color="black", linestyle="dashed", linewidth=1)
     madfm_style = dict(color="black", linestyle="dotted", linewidth=1)
 
-    median_line_artist = g.ax_joint.axvline(dra_median, **median_style)
-    _ = g.ax_joint.axhline(ddec_median, **median_style)
-    _ = g.ax_marg_x.axvline(dra_median, **median_style)
-    _ = g.ax_marg_y.axhline(ddec_median, **median_style)
+    median_line_artist = g.ax_joint.axvline(dra_median_value, **median_style)
+    _ = g.ax_joint.axhline(ddec_median_value, **median_style)
+    _ = g.ax_marg_x.axvline(dra_median_value, **median_style)
+    _ = g.ax_marg_y.axhline(ddec_median_value, **median_style)
 
-    madfm_line_artist = g.ax_joint.axvline(dra_median - dra_madfm / 2, **madfm_style)
-    _ = g.ax_joint.axvline(dra_median + dra_madfm / 2, **madfm_style)
-    _ = g.ax_joint.axhline(ddec_median - ddec_madfm / 2, **madfm_style)
-    _ = g.ax_joint.axhline(ddec_median + ddec_madfm / 2, **madfm_style)
-    _ = g.ax_marg_x.axvline(dra_median - dra_madfm / 2, **madfm_style)
-    _ = g.ax_marg_x.axvline(dra_median + dra_madfm / 2, **madfm_style)
-    _ = g.ax_marg_y.axhline(ddec_median - ddec_madfm / 2, **madfm_style)
-    _ = g.ax_marg_y.axhline(ddec_median + ddec_madfm / 2, **madfm_style)
+    madfm_line_artist = g.ax_joint.axvline(dra_median_value - dra_madfm_value / 2, **madfm_style)
+    _ = g.ax_joint.axvline(dra_median_value + dra_madfm_value / 2, **madfm_style)
+    _ = g.ax_joint.axhline(ddec_median_value - ddec_madfm_value / 2, **madfm_style)
+    _ = g.ax_joint.axhline(ddec_median_value + ddec_madfm_value / 2, **madfm_style)
+    _ = g.ax_marg_x.axvline(dra_median_value - dra_madfm_value / 2, **madfm_style)
+    _ = g.ax_marg_x.axvline(dra_median_value + dra_madfm_value / 2, **madfm_style)
+    _ = g.ax_marg_y.axhline(ddec_median_value - ddec_madfm_value / 2, **madfm_style)
+    _ = g.ax_marg_y.axhline(ddec_median_value + ddec_madfm_value / 2, **madfm_style)
 
     legend_handles = [median_line_artist, madfm_line_artist]
     legend_labels = ["Median", "MADFM"]
@@ -120,10 +129,12 @@ def positional_offset_plot(
         legend_handles.append(pixel_patch)
         legend_labels.append("Pixel size")
 
+    # place legend upper right corner at the top right of the figure
+    # bbox_to_anchor necessary as the suptitle below may expand the figure bbox height to 1.05
+    g.fig.legend(legend_handles, legend_labels, loc="upper right", bbox_to_anchor=(1.0, 1.0))
+
     if title:
         g.fig.suptitle(title, y=1.05)
-
-    g.fig.legend(legend_handles, legend_labels)
     g.fig.tight_layout()
 
     return g
@@ -133,7 +144,7 @@ def flux_ratio_plot(
     xmatch_qt: QTable,
     title: Optional[str] = None,
     unit: str = "mJy/beam",
-    fit_params: Optional[Tuple[float, float, float, float]] = None,
+    fit_params: Optional[Tuple[float, u.Quantity, float, u.Quantity]] = None,
 ) -> matplotlib.axes.Axes:
     """Plot the flux ratios of crossmatched sources. X-axis is the reference catalog
     flux, Y-axis is the catalog flux / reference catalog flux.
@@ -147,32 +158,36 @@ def flux_ratio_plot(
         Plot title, by default None
     unit : str, optional
         Plot units, by default "mJy/beam"
-    fit_params : Optional[Tuple[float, float, float, float]], optional
-        Tuple of floats (gradient, offset, gradient error, offset error) in units of
-        `unit`. If `None`, these values will be calculated. Default None
+    fit_params : Optional[Tuple[float, u.Quantity, float, u.Quantity]], optional
+        Tuple of (gradient, offset, gradient error, offset error). Gradient and gradient
+        error are floats. Offset and offset error are Quantity objects with units of
+        spectral flux density type that will be converted to `unit`. If `None`, these
+        values will be calculated. Default None.
 
     Returns
     -------
     matplotlib.axes.Axes
     """
-    # seaborn expects a Pandas DataFrame
-    df = pd.DataFrame(
-        {
-            "flux_peak": xmatch_qt["flux_peak"].to(unit),
-            "flux_peak_err": xmatch_qt["flux_peak_err"].to(unit),
-            "flux_peak_reference": xmatch_qt["flux_peak_reference"].to(unit),
-            "flux_peak_err_reference": xmatch_qt["flux_peak_err_reference"].to(unit),
-            "flux_peak_ratio": xmatch_qt["flux_peak_ratio"],
-        }
-    )
     if fit_params is None:
-        gradient, offset, gradient_err, offset_err = calculate_flux_offsets(df)
+        gradient, offset, gradient_err, offset_err = calculate_flux_offsets(xmatch_qt)
     else:
         gradient, offset, gradient_err, offset_err = fit_params
     ugradient = ufloat(gradient, gradient_err)
-    uoffset = ufloat(offset, offset_err)
-    logger.info(
-        "ODR fit parameters: Sp = Sp,ref * %s + %s %s.", ugradient, uoffset, unit
+    uoffset = ufloat(offset.to(unit).value, offset_err.to(unit).value)
+    if fit_params is None:
+        logger.info(
+            "ODR fit parameters: Sp = Sp,ref * %s + %s %s.", ugradient, uoffset, unit
+        )
+
+    # seaborn expects a Pandas DataFrame
+    df = pd.DataFrame(
+        {
+            "flux_peak": xmatch_qt["flux_peak"].to(unit).value,
+            "flux_peak_err": xmatch_qt["flux_peak_err"].to(unit).value,
+            "flux_peak_reference": xmatch_qt["flux_peak_reference"].to(unit).value,
+            "flux_peak_err_reference": xmatch_qt["flux_peak_err_reference"].to(unit).value,
+            "flux_peak_ratio": xmatch_qt["flux_peak_ratio"],
+        }
     )
 
     fig, (ax, ax_resid) = plt.subplots(

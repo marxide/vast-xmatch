@@ -4,7 +4,6 @@ from typing import Tuple
 from astropy.coordinates import SkyCoord, Angle, match_coordinates_sky
 from astropy.table import QTable, join, join_skycoord
 import astropy.units as u
-import pandas as pd
 import numpy as np
 from scipy import odr
 
@@ -14,9 +13,9 @@ from vast_xmatch.catalogs import Catalog
 logger = logging.getLogger(__name__)
 
 
-def median_abs_deviation(data: pd.Series):
-    median = data.median()
-    return (data - median).abs().median()
+def median_abs_deviation(data):
+    median = np.median(data)
+    return np.median(np.abs(data - median))
 
 
 def straight_line(B, x):
@@ -60,7 +59,9 @@ def crossmatch_qtables(
     )
     # compute the separations
     xmatch["separation"] = xmatch["coord_reference"].separation(xmatch["coord"])
-    xmatch["dra"], xmatch["ddec"] = xmatch["coord_reference"].spherical_offsets_to(xmatch["coord"])
+    xmatch["dra"], xmatch["ddec"] = xmatch["coord_reference"].spherical_offsets_to(
+        xmatch["coord"]
+    )
     xmatch["flux_peak_ratio"] = xmatch["flux_peak"] / xmatch["flux_peak_reference"]
 
     logger.info(
@@ -74,57 +75,63 @@ def crossmatch_qtables(
 
 
 def calculate_positional_offsets(
-    df: pd.DataFrame,
-) -> Tuple[float, float, float, float]:
+    xmatch_qt: QTable,
+) -> Tuple[u.Quantity, u.Quantity, u.Quantity, u.Quantity]:
     """Calculate the median positional offsets and the median absolute deviation between
     matched sources.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        DataFrame of crossmatched sources. Must contain columns: dra, ddec.
+    xmatch_qt : QTable
+        QTable of crossmatched sources. Must contain columns: dra, ddec.
 
     Returns
     -------
-    Tuple[float, float, float, float]
+    Tuple[u.Quantity, u.Quantity, u.Quantity, u.Quantity]
         Median RA offset, median Dec offset, median absolute deviation of RA offsets,
-            median absolute deviation of Dec offsets. All units are arcsec.
+        median absolute deviation of Dec offsets. Units match their inputs and are of
+        angular type.
     """
-    dra_median = df["dra"].median()
-    dra_madfm = median_abs_deviation(df["dra"])
-    ddec_median = df["ddec"].median()
-    ddec_madfm = median_abs_deviation(df["ddec"])
+    dra_median = np.median(xmatch_qt["dra"])
+    dra_madfm = median_abs_deviation(xmatch_qt["dra"])
+    ddec_median = np.median(xmatch_qt["ddec"])
+    ddec_madfm = median_abs_deviation(xmatch_qt["ddec"])
 
     return dra_median, ddec_median, dra_madfm, ddec_madfm
 
 
-def calculate_flux_offsets(df: pd.DataFrame) -> Tuple[float, float, float, float]:
+def calculate_flux_offsets(
+    xmatch_qt: QTable,
+) -> Tuple[float, u.Quantity, float, u.Quantity]:
     """Calculate the gradient and offset of a straight-line fit to the peak fluxes for
     crossmatched sources. The function `y = mx + b` is fit to the reference peak fluxes
     vs the peak fluxes using orthogonal distance regression with `scipy.odr`.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        DataFrame of crossmatched sources. Must contain columns: flux_peak,
-            flux_peak_reference, flux_peak_err, flux_peak_err_reference.
+    xmatch_qt : QTable
+        QTable of crossmatched sources. Must contain columns: flux_peak,
+        flux_peak_reference, flux_peak_err, flux_peak_err_reference.
 
     Returns
     -------
-    Tuple[float, float, float, float]
+    Tuple[float, u.Quantity, float, u.Quantity]
         Model fit parameters: the gradient, intercept (offset), gradient error, and
-            intercept error.
+        intercept error. Offset and offset error unit match the reference flux peak
+        input and are of spectral flux density type.
     """
+    flux_unit = xmatch_qt["flux_peak_reference"].unit
     linear_model = odr.Model(straight_line)
+    # convert all to reference flux unit as ODR does not preserve Quantity objects
     odr_data = odr.RealData(
-        df["flux_peak_reference"],
-        df["flux_peak"],
-        sx=df["flux_peak_err_reference"],
-        sy=df["flux_peak_err"],
+        xmatch_qt["flux_peak_reference"].to(flux_unit).value,
+        xmatch_qt["flux_peak"].to(flux_unit).value,
+        sx=xmatch_qt["flux_peak_err_reference"].to(flux_unit).value,
+        sy=xmatch_qt["flux_peak_err"].to(flux_unit).value,
     )
     odr_obj = odr.ODR(odr_data, linear_model, beta0=[1.0, 0.0])
     odr_out = odr_obj.run()
     gradient, offset = odr_out.beta
     gradient_err, offset_err = odr_out.sd_beta
 
-    return gradient, offset, gradient_err, offset_err
+    return gradient, offset * flux_unit, gradient_err, offset_err * flux_unit
