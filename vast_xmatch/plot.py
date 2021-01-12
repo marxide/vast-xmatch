@@ -27,6 +27,7 @@ def positional_offset_plot(
     unit: str = "arcsec",
     pixel_size: Optional[Angle] = Angle("2.5arcsec"),
     offsets: Optional[Tuple[u.Quantity, u.Quantity, u.Quantity, u.Quantity]] = None,
+    hex_gridsize: int = 50,
 ) -> sns.JointGrid:
     """Plot the positional offsets of crossmatched sources.
 
@@ -87,7 +88,7 @@ def positional_offset_plot(
         xlim=(data_min, data_max),
         ylim=(data_min, data_max),
         joint_kws=dict(
-            gridsize=50,
+            gridsize=hex_gridsize,
             bins=10,
         ),
         marginal_kws=dict(edgecolor="none"),

@@ -163,6 +163,15 @@ def _transform_epoch_vastp(epoch: str) -> str:
         "_positional_offset.png and _flux_ratio.png."
     ),
 )
+@click.option(
+    "--plot-pos-gridsize",
+    type=click.INT,
+    default=50,
+    help=(
+        "Number of hexagons in the x-direction of the positional offset plot. Default "
+        "is 50."
+    ),
+)
 def vast_xmatch_qc(
     reference_catalog_path: Union[Path, str],
     catalog_path: Union[Path, str],
@@ -176,6 +185,7 @@ def vast_xmatch_qc(
     flux_unit: str = "mJy",
     csv_output: Optional[Union[Path, str]] = None,
     plot_path: Optional[Union[Path, str]] = None,
+    plot_pos_gridsize: int = 50,
 ):
     if verbose:
         logger.setLevel(logging.DEBUG)
@@ -300,6 +310,7 @@ def vast_xmatch_qc(
             title=title,
             unit=positional_unit,
             offsets=(dra_median, ddec_median, dra_madfm, ddec_madfm),
+            hex_gridsize=plot_pos_gridsize,
         )
         g_pos_offset.savefig(
             plot_path / f"{catalog.path.stem}_positional_offset.png",
