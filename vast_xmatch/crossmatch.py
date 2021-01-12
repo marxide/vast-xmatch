@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 from scipy import odr
 
+from vast_xmatch.catalogs import Catalog
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,8 @@ def join_match_coordinates_sky(
 
 
 def crossmatch_qtables(
-    catalog: QTable,
-    catalog_reference: QTable,
+    catalog: Catalog,
+    catalog_reference: Catalog,
     radius: Angle = Angle("10 arcsec"),
     catalog_coord_cols: Tuple[str, str] = ("ra_deg_cont", "dec_deg_cont"),
     catalog_reference_coord_cols: Tuple[str, str] = ("ra_deg_cont", "dec_deg_cont"),
@@ -43,8 +45,8 @@ def crossmatch_qtables(
     logger.debug("Using crossmatch radius: %s.", radius)
 
     xmatch = join(
-        catalog,
-        catalog_reference,
+        catalog.table,
+        catalog_reference.table,
         keys="coord",
         table_names=["", "reference"],
         join_funcs={

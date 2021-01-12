@@ -3,32 +3,49 @@ from pathlib import Path
 from typing import Optional, Tuple, Union
 
 from astropy.coordinates import Angle
-from astropy.table import QTable
 import astropy.units as u
 import click
-import matplotlib.pyplot as plt
 import pandas as pd
 from uncertainties import ufloat
 
-from vast_xmatch.catalogs import (
-    read_aegean_csv,
-    read_selavy,
-    calculate_condon_flux_errors,
-    get_psf_size_from_metadata_server,
-    get_vast_filename_parts,
-    MetadataNotFound,
-    UnknownFilenameConvention,
-)
+from vast_xmatch.catalogs import Catalog, UnknownFilenameConvention
 from vast_xmatch.crossmatch import (
     crossmatch_qtables,
     calculate_positional_offsets,
     calculate_flux_offsets,
 )
-from vast_xmatch.plot import positional_offset_plot, flux_ratio_plot
 
 
-class AngleType(click.ParamType):
-    name = "angle"
+class _AstropyUnitType(click.ParamType):
+    def convert(self, value, param, ctx, unit_physical_type):
+        try:
+            unit = u.Unit(value)
+        except ValueError:
+            self.fail(f"astropy.units.Unit does not understand: {value}.")
+        if unit.physical_type != unit_physical_type:
+            self.fail(
+                f"{unit} is a {unit.physical_type} unit. It must be of type {unit_physical_type}."
+            )
+        else:
+            return unit
+
+
+class AngleUnitType(_AstropyUnitType):
+    name = "angle unit"
+
+    def convert(self, value, param, ctx):
+        return super().convert(value, param, ctx, "angle")
+
+
+class FluxUnitType(_AstropyUnitType):
+    name = "flux unit"
+
+    def convert(self, value, param, ctx):
+        return super().convert(value, param, ctx, "spectral flux density")
+
+
+class AngleQuantityType(click.ParamType):
+    name = "angle quantity"
 
     def convert(self, value, param, ctx):
         try:
@@ -38,7 +55,9 @@ class AngleType(click.ParamType):
             self.fail(f"astropy.coordinates.Angle does not understand: {value}.")
 
 
-ANGLE_TYPE = AngleType()
+ANGLE_UNIT_TYPE = AngleUnitType()
+FLUX_UNIT_TYPE = FluxUnitType()
+ANGLE_QUANTITY_TYPE = AngleQuantityType()
 logger = logging.getLogger("vast_xmatch")
 
 
@@ -53,164 +72,132 @@ def _transform_epoch_vastp(epoch: str) -> str:
     return f"vastp{_transform_epoch_raw(epoch)}"
 
 
-def common_options(function):
-    function = click.argument(
-        "reference_catalog", type=click.Path(exists=True, dir_okay=False)
-    )(function)
-    function = click.argument("catalog", type=click.Path(exists=True, dir_okay=False))(
-        function
-    )
-    function = click.option(
-        "--radius",
-        type=ANGLE_TYPE,
-        default="10 arcsec",
-        help=(
-            "Maximum separation limit for nearest-neighbour crossmatch. Accepts any "
-            "string understood by astropy.coordinates.Angle."
-        ),
-    )(function)
-    function = click.option(
-        "--condon",
-        is_flag=True,
-        help="Calculate Condon (1997) flux errors and use them instead of the original errors.",
-    )(function)
-    function = click.option(
-        "--lookup-psf",
-        is_flag=True,
-        help=(
-            "If using --condon, lookup the catalog PSFs from the VAST metadata server. "
-            "Requires the catalog files to be named according to the VAST convention, e.g. "
-            "VAST_0102-06A.EPOCH01.I.selavy.components.txt."
-        ),
-    )(function)
-    function = click.option(
-        "--psf-reference",
-        nargs=2,
-        type=float,
-        required=False,
-        help=(
-            "If using --condon and not using --lookup-psf, use this specified PSF size in "
-            "arcsec for `reference_catalog`."
-        ),
-    )(function)
-    function = click.option(
-        "--psf",
-        nargs=2,
-        type=float,
-        required=False,
-        help=(
-            "If using --condon and not using --lookup-psf, use this specified PSF size in "
-            "arcsec for `catalog`."
-        ),
-    )(function)
-    function = click.option("-v", "--verbose", is_flag=True)(function)
-    function = click.option("--aegean", is_flag=True, help="Input catalog is an Aegean CSV.")(function)
-
-    return function
-
-
-def vast_xmatch_selavy(
-    reference_catalog: Union[Path, str],
-    catalog: Union[Path, str],
+@click.command()
+@click.argument("reference_catalog_path", type=click.Path(exists=True, dir_okay=False))
+@click.argument("catalog_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--radius",
+    type=ANGLE_QUANTITY_TYPE,
+    default="10 arcsec",
+    help=(
+        "Maximum separation limit for nearest-neighbour crossmatch. Accepts any "
+        "string understood by astropy.coordinates.Angle."
+    ),
+)
+@click.option(
+    "--condon",
+    is_flag=True,
+    help=(
+        "Calculate Condon (1997) flux errors and use them instead of the original "
+        "errors. Will also correct the peak flux values for noise. Requires that the "
+        "input catalogs follow the VAST naming convention, e.g. for COMBINED images: "
+        "VAST_0102-06A.EPOCH01.I.selavy.components.txt, and for TILE images: EPOCH01/"
+        "TILES/STOKESI_SELAVY/selavy-image.i.SB9667.cont.VAST_0102-06A.linmos.taylor.0"
+        ".restored.components.txt. Note that for TILE images, the epoch is determined "
+        "from the full path. If the input catalogs do not follow this convention, then "
+        "the PSF sizes must be supplied using --psf-reference and/or --psf. The "
+        "deafult behaviour is to lookup the PSF sizes from the VAST metadata server."
+    ),
+)
+@click.option(
+    "--psf-reference",
+    nargs=2,
+    type=float,
+    required=False,
+    help=(
+        "If using --condon and not using --lookup-psf, use this specified PSF size in "
+        "arcsec for `reference_catalog`."
+    ),
+)
+@click.option(
+    "--psf",
+    nargs=2,
+    type=float,
+    required=False,
+    help=(
+        "If using --condon and not using --lookup-psf, use this specified PSF size in "
+        "arcsec for `catalog`."
+    ),
+)
+@click.option("-v", "--verbose", is_flag=True)
+@click.option("--aegean", is_flag=True, help="Input catalog is an Aegean CSV.")
+@click.option(
+    "--positional-unit",
+    type=ANGLE_UNIT_TYPE,
+    default="arcsec",
+    help="Positional correction output unit. Must be an angular unit. Default is arcsec.",
+)
+@click.option(
+    "--flux-unit",
+    type=FLUX_UNIT_TYPE,
+    default="mJy",
+    help=(
+        "Flux correction output unit. Must be a spectral flux density unit. Do not "
+        "include a beam divisor, this will be automatically added for peak flux values. "
+        "Default is mJy."
+    ),
+)
+@click.option(
+    "--csv-output",
+    type=click.Path(dir_okay=False, writable=True),
+    help=(
+        "Path to write CSV of positional and flux corrections. Only available if "
+        "`catalog` follows VAST naming conventions as the field and epoch must be known. "
+        "If the file exists, the corrections will be appended. Corrections are written "
+        "in the units specified by --positional-unit and --flux-unit. To apply the "
+        "corrections, use the following equations: ra corrected = ra + ra_correction / "
+        "cos(dec); dec corrected = dec + dec_correction; flux peak corrected = "
+        "flux_peak_correction_multiplicative * (flux peak + flux_peak_correction_additive. "
+        "Note that these correction values have been modified to suit these equations "
+        "and are different from the fitted values shown in the logs."
+    ),
+)
+def vast_xmatch_qc(
+    reference_catalog_path: Union[Path, str],
+    catalog_path: Union[Path, str],
     radius: Angle = Angle("10arcsec"),
     condon: bool = False,
-    lookup_psf: bool = True,
     psf_reference: Optional[Tuple[float, float]] = None,
     psf: Optional[Tuple[float, float]] = None,
     verbose: bool = False,
     aegean: bool = False,
-) -> QTable:
+    positional_unit: str = "arcsec",
+    flux_unit: str = "mJy",
+    csv_output: Optional[str] = None,
+):
     if verbose:
         logger.setLevel(logging.DEBUG)
     logger.debug("Set logger to DEBUG.")
-    logger.debug("radius: %s.", radius)
-    if isinstance(reference_catalog, str):
-        reference_catalog = Path(reference_catalog)
-    if isinstance(catalog, str):
-        catalog = Path(catalog)
 
-    # validate Condon and PSF options
-    if condon:
-        if not lookup_psf:
-            try:
-                if not psf_reference:
-                    raise SystemExit(
-                        "--psf-reference must be supplied if --lookup-psf is not used."
-                    )
-                if not psf:
-                    raise SystemExit(
-                        "--psf must be supplied if --lookup-psf is not used."
-                    )
-            except SystemExit as e:
-                logger.exception(e)
-                raise
-            psf_major_ref, psf_minor_ref = psf_reference * u.arcsec
-            psf_major, psf_minor = psf * u.arcsec
-        else:
-            # determine field and epoch from filenames
-            try:
-                # reference catalog
-                _, parts_ref = get_vast_filename_parts(reference_catalog)
-                psf_major_ref, psf_minor_ref = (
-                    get_psf_size_from_metadata_server(
-                        parts_ref["field"], _transform_epoch_raw(parts_ref["epoch"])
-                    )
-                    * u.arcsec
-                )
-                # catalog
-                _, parts = get_vast_filename_parts(catalog)
-                psf_major, psf_minor = (
-                    get_psf_size_from_metadata_server(
-                        parts["field"], _transform_epoch_raw(parts["epoch"])
-                    )
-                    * u.arcsec
-                )
-            except UnknownFilenameConvention as e:
-                logger.exception(e)
-                logger.error(
-                    "Condon errors can only be calculated without --lookup-psf for "
-                    "catalogs that follow the VAST filename conventions."
-                )
-                raise SystemExit("A fatal error occurred. Check the logs for details.")
-            except MetadataNotFound as e:
-                logger.exception(e)
-                raise SystemExit("A fatal error occurred. Check the logs for details.")
-        logger.info(
-            "Reference catalog PSF size: %.2f, %.2f arcsec.",
-            psf_major_ref.to("arcsec").value,
-            psf_minor_ref.to("arcsec").value,
+    if isinstance(reference_catalog_path, str):
+        reference_catalog_path = Path(reference_catalog_path)
+    if isinstance(catalog_path, str):
+        catalog_path = Path(catalog_path)
+    if isinstance(psf_reference, tuple) and len(psf_reference) == 0:
+        psf_reference = None
+    if isinstance(psf, tuple) and len(psf) == 0:
+        psf = None
+
+    reference_catalog = Catalog(
+        reference_catalog_path, psf=psf_reference, condon=condon
+    )
+    catalog = Catalog(
+        catalog_path,
+        psf=psf,
+        condon=condon,
+        input_format="aegean" if aegean else "selavy",
+    )
+
+    # CSV output requires the catalogs to follow VAST naming conventions
+    if csv_output is not None and (catalog.field is None or catalog.epoch is None):
+        e = UnknownFilenameConvention(
+            f"Unknown catalog filename convention: {catalog.path}. CSV output is unavailable."
         )
-        logger.info(
-            "Catalog PSF size: %.2f, %.2f arcsec.",
-            psf_major.to("arcsec").value,
-            psf_minor.to("arcsec").value,
-        )
-
-    reference_catalog_qt = read_selavy(reference_catalog)
-    if aegean:
-        catalog_qt = read_aegean_csv(catalog)
-    else:
-    catalog_qt = read_selavy(catalog)
-
-    # compute Condon (1997) flux errors
-    if condon:
-        for qt, (_psf_major, _psf_minor) in zip(
-            (reference_catalog_qt, catalog_qt),
-            ((psf_major_ref, psf_minor_ref), (psf_major, psf_minor)),
-        ):
-            qt["flux_peak_err_condon"] = calculate_condon_flux_errors(
-                qt,
-                _psf_major,
-                _psf_minor,
-                correct_peak_for_noise=True,
-            )
-            qt["flux_peak_err_selavy"] = qt["flux_peak_err"]
-            qt["flux_peak_err"] = qt["flux_peak_err_condon"]
-            qt["flux_peak_selavy"] = qt["flux_peak"]
-            qt["flux_peak"] = qt["flux_peak_condon"]
+        logger.error(e)
+        raise SystemExit(e)
 
     # perform the crossmatch
-    xmatch_qt = crossmatch_qtables(catalog_qt, reference_catalog_qt, radius=radius)
+    xmatch_qt = crossmatch_qtables(catalog, reference_catalog, radius=radius)
     # select xmatches with non-zero flux errors and no siblings
     logger.info("Removing crossmatched sources with siblings or flux peak errors = 0.")
     mask = xmatch_qt["flux_peak_err"] > 0
@@ -224,26 +211,17 @@ def vast_xmatch_selavy(
         (len(data) / len(xmatch_qt)) * 100,
     )
 
-    return data
-
-
-def vast_xmatch_qc(
-    positional_unit: str = "arcsec",
-    flux_unit: str = "mJy/beam",
-    csv_output: Optional[str] = None,
-    **kwargs,
-):
-    data = vast_xmatch_selavy(**kwargs)
-
     # calculate positional offsets and flux ratio
     df = pd.DataFrame(
         {
             "dra": data["dra"].to(positional_unit),
             "ddec": data["ddec"].to(positional_unit),
-            "flux_peak": data["flux_peak"].to(flux_unit),
-            "flux_peak_err": data["flux_peak_err"].to(flux_unit),
-            "flux_peak_reference": data["flux_peak_reference"].to(flux_unit),
-            "flux_peak_err_reference": data["flux_peak_err_reference"].to(flux_unit),
+            "flux_peak": data["flux_peak"].to(flux_unit / u.beam),
+            "flux_peak_err": data["flux_peak_err"].to(flux_unit / u.beam),
+            "flux_peak_reference": data["flux_peak_reference"].to(flux_unit / u.beam),
+            "flux_peak_err_reference": data["flux_peak_err_reference"].to(
+                flux_unit / u.beam
+            ),
             "flux_peak_ratio": data["flux_peak_ratio"],
         }
     )
@@ -267,8 +245,7 @@ def vast_xmatch_qc(
 
     if csv_output is not None:
         csv_output_path = Path(csv_output)
-        _, parts = get_vast_filename_parts(kwargs["catalog"])
-        sbid = parts["sbid"] if "sbid" in parts else ""
+        sbid = catalog.sbid if catalog.sbid is not None else ""
         if not csv_output_path.exists():
             f = open(csv_output_path, "w")
             print(
@@ -282,29 +259,20 @@ def vast_xmatch_qc(
         else:
             f = open(csv_output_path, "a")
         logger.info(
-                "Writing corrections CSV. To correct positions, add the corrections to "
-                "the original source positions i.e. RA' = RA + ra_correction. To correct "
-                "fluxes, add the additive correction and multiply the result by the "
-                "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
-                "(S + flux_peak_correction_additive)."
-            )
+            "Writing corrections CSV. To correct positions, add the corrections to "
+            "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
+            "correct fluxes, add the additive correction and multiply the result by the "
+            "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
+            "(S + flux_peak_correction_additive)."
+        )
         flux_corr_mult = 1 / ugradient
         flux_corr_add = -1 * uoffset
         print(
             (
-                f"{parts['field']},{parts['epoch']},{sbid},{dra_median * -1},"
+                f"{catalog.field},{catalog.epoch},{sbid},{dra_median * -1},"
                 f"{ddec_median * -1},{dra_madfm},{ddec_madfm},{flux_corr_mult.nominal_value},"
                 f"{flux_corr_add.nominal_value},{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
             ),
             file=f,
         )
         f.close()
-
-
-@click.command()
-@common_options
-def vast_xmatch_selavy_plots(*args, **kwargs):
-    data = vast_xmatch_selavy(*args, **kwargs)
-    _ = positional_offset_plot(data, unit="arcsec")
-    _ = flux_ratio_plot(data)
-    plt.show()

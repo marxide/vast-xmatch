@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 import re
-from typing import Tuple, Union, Dict
+from typing import Tuple, Union, Dict, Optional
 from urllib.parse import quote
 
 from astropy.coordinates import SkyCoord
@@ -37,6 +37,142 @@ class MetadataNotFound(Exception):
     pass
 
 
+class UnknownCatalogInputFormat(Exception):
+    pass
+
+
+class Catalog:
+    def __init__(
+        self,
+        path: Path,
+        psf: Optional[Tuple[float, float]] = None,
+        input_format: str = "selavy",
+        condon: bool = False,
+    ):
+        self.path: Path
+        self.table: QTable
+        self.field: Optional[str]
+        self.epoch: Optional[str]
+        self.sbid: Optional[str]
+        self.psf_major: Optional[u.Quantity]
+        self.psf_minor: Optional[u.Quantity]
+
+        # read catalog
+        if input_format == "selavy":
+            logger.debug("Reading %s as a Selavy catalog.", path)
+            read_catalog = read_selavy
+        elif input_format == "aegean":
+            logger.debug("Reading %s as an Aegean catalog.", path)
+            read_catalog = read_aegean_csv
+        else:
+            raise UnknownCatalogInputFormat(
+                "Only 'selavy' and 'aegean' are currently supported."
+            )
+        self.path = path
+        self.table = read_catalog(path)
+
+        # get field and epoch from filename
+        try:
+            self.type, parts = get_vast_filename_parts(self.path)
+            self.epoch = parts["epoch"]
+            self.field = parts["field"]
+            if self.type == "TILE":
+                self.sbid = parts["sbid"]
+        except UnknownFilenameConvention:
+            logger.warning(
+                "Unknown catalog filename convention: %s. PSF lookup will be unavailable.",
+                self.path,
+            )
+            self.epoch = None
+            self.field = None
+
+        if psf is None and self.epoch_raw and self.field:
+            psf_major, psf_minor = get_psf_size_from_metadata_server(
+                self.field, self.epoch_raw
+            )
+            self.psf_major = psf_major
+            self.psf_minor = psf_minor
+        elif psf is not None:
+            self.psf_major, self.psf_minor = psf * u.arcsec
+            logger.debug(
+                "Using user provided PSF for %s: %s, %s.",
+                self.path,
+                self.psf_major,
+                self.psf_minor,
+            )
+        else:
+            logger.warning(
+                "PSF is unknown for %s. Condon errors will be unavailable.", self.path
+            )
+            self.psf_major = None
+            self.psf_minor = None
+
+        if condon and self.psf_major is not None and self.psf_minor is not None:
+            _ = self.calculate_condon_flux_errors(correct_peak_for_noise=True)
+            logger.debug("Condon errors computed for %s.", self.path)
+
+    @property
+    def epoch_raw(self) -> Optional[str]:
+        if self.epoch:
+            epoch = self.epoch.replace("EPOCH", "")
+            if epoch.startswith("0"):
+                epoch = epoch.lstrip("0")
+            return epoch
+        else:
+            return self.epoch
+
+    def calculate_condon_flux_errors(
+        self,
+        alpha_maj1=2.5,
+        alpha_min1=0.5,
+        alpha_maj2=0.5,
+        alpha_min2=2.5,
+        alpha_maj3=1.5,
+        alpha_min3=1.5,
+        clean_bias=0.0,
+        clean_bias_error=0.0,
+        frac_flux_cal_error=0.0,
+        correct_peak_for_noise=False,
+    ):
+
+        noise = self.table["rms_image"]
+        snr = self.table["flux_peak"] / noise
+
+        rho_sq3 = (
+            (
+                self.table["maj_axis"]
+                * self.table["min_axis"]
+                / (4.0 * self.psf_major * self.psf_minor)
+            )
+            * (1.0 + (self.psf_major / self.table["maj_axis"]) ** 2) ** alpha_maj3
+            * (1.0 + (self.psf_minor / self.table["min_axis"]) ** 2) ** alpha_min3
+            * snr ** 2
+        )
+
+        flux_peak_col = self.table["flux_peak"]
+        flux_peak_condon = self.table["flux_peak"] + (
+            -(noise ** 2) / self.table["flux_peak"] + clean_bias
+        )
+        if correct_peak_for_noise:
+            flux_peak_col = flux_peak_condon
+
+        errorpeaksq = (
+            (frac_flux_cal_error * flux_peak_col) ** 2
+            + clean_bias_error ** 2
+            + 2.0 * flux_peak_col ** 2 / rho_sq3
+        )
+        errorpeak = np.sqrt(errorpeaksq)
+
+        self.table["flux_peak_condon"] = flux_peak_condon
+        self.table["flux_peak_selavy"] = self.table["flux_peak"]
+        self.table["flux_peak_err_condon"] = errorpeak
+        self.table["flux_peak_err_selavy"] = self.table["flux_peak_err"]
+        self.table["flux_peak_err"] = self.table["flux_peak_err_condon"]
+        if correct_peak_for_noise:
+            self.table["flux_peak"] = self.table["flux_peak_condon"]
+        return flux_peak_condon, errorpeak
+
+
 def _convert_selavy_columns_to_quantites(
     qt: QTable, units: Dict[str, u.Unit] = SELAVY_COLUMN_UNITS
 ) -> QTable:
@@ -64,6 +200,7 @@ def get_psf_size_from_metadata_server(field: str, epoch: str) -> Tuple[float, fl
     try:
         psf_major = metadata.loc[0, "psf_major"] * u.arcsec
         psf_minor = metadata.loc[0, "psf_minor"] * u.arcsec
+        logger.debug("PSF major, minor: %s, %s.", psf_major, psf_minor)
     except KeyError:
         raise MetadataNotFound(
             f"Metadata server returned no results for {field} epoch {epoch}."
@@ -212,9 +349,13 @@ def read_aegean_csv(catalog_path: Path) -> QTable:
         qt.rename_column(col, new_col)
         qt[new_col].unit = unit
     # add has_siblings column
-    island_source_counts = qt[["island", "source"]].group_by("island").groups.aggregate(np.sum)
+    island_source_counts = (
+        qt[["island", "source"]].group_by("island").groups.aggregate(np.sum)
+    )
     island_source_counts.rename_column("source", "has_siblings")
-    island_source_counts["has_siblings"] = island_source_counts["has_siblings"].astype(bool)
+    island_source_counts["has_siblings"] = island_source_counts["has_siblings"].astype(
+        bool
+    )
     qt = join(qt, island_source_counts, keys="island", join_type="left")
 
     qt["coord"] = SkyCoord(ra=qt["ra_deg_cont"], dec=qt["dec_deg_cont"])
@@ -222,50 +363,3 @@ def read_aegean_csv(catalog_path: Path) -> QTable:
         qt["coord"], nthneighbor=2
     )
     return qt
-
-
-def calculate_condon_flux_errors(
-    catalog_qt: QTable,
-    psf_major,
-    psf_minor,
-    alpha_maj1=2.5,
-    alpha_min1=0.5,
-    alpha_maj2=0.5,
-    alpha_min2=2.5,
-    alpha_maj3=1.5,
-    alpha_min3=1.5,
-    clean_bias=0.0,
-    clean_bias_error=0.0,
-    frac_flux_cal_error=0.0,
-    correct_peak_for_noise=False,
-):
-
-    noise = catalog_qt["rms_image"]
-    snr = catalog_qt["flux_peak"] / noise
-
-    rho_sq3 = (
-        (
-            catalog_qt["maj_axis"]
-            * catalog_qt["min_axis"]
-            / (4.0 * psf_major * psf_minor)
-        )
-        * (1.0 + (psf_major / catalog_qt["maj_axis"]) ** 2) ** alpha_maj3
-        * (1.0 + (psf_minor / catalog_qt["min_axis"]) ** 2) ** alpha_min3
-        * snr ** 2
-    )
-
-    flux_peak_col = catalog_qt["flux_peak"]
-    if correct_peak_for_noise:
-        catalog_qt["flux_peak_condon"] = catalog_qt["flux_peak"] + (
-            -(noise ** 2) / catalog_qt["flux_peak"] + clean_bias
-        )
-        flux_peak_col = catalog_qt["flux_peak_condon"]
-
-    errorpeaksq = (
-        (frac_flux_cal_error * flux_peak_col) ** 2
-        + clean_bias_error ** 2
-        + 2.0 * flux_peak_col ** 2 / rho_sq3
-    )
-    errorpeak = np.sqrt(errorpeaksq)
-
-    return errorpeak
