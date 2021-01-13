@@ -5,7 +5,6 @@ name = "pypi"
 
 [packages]
 vast-xmatch = {editable = true, path = "."}
-uncertainties = "*"
 
 [dev-packages]
 flake8 = "*"

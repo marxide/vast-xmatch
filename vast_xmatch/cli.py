@@ -13,6 +13,7 @@ from vast_xmatch.crossmatch import (
     calculate_positional_offsets,
     calculate_flux_offsets,
 )
+import vast_xmatch.db as db
 from vast_xmatch.plot import positional_offset_plot, flux_ratio_plot
 
 
@@ -153,6 +154,17 @@ def _transform_epoch_vastp(epoch: str) -> str:
     ),
 )
 @click.option(
+    "--sqlite-output",
+    type=click.Path(dir_okay=False, file_okay=True),
+    help=(
+        "Write corrections to the given SQLite3 database. Will create the database if "
+        "it doesn't exist and replace existing corrections for matching catalogs. See "
+        "the help for --csv-output for more information on the correction values. "
+        "However, unlike the CSV output, the positional unit for the database is always "
+        "degrees and the flux unit is always Jy[/beam]."
+    ),
+)
+@click.option(
     "--plot-path",
     type=click.Path(),
     help=(
@@ -181,9 +193,10 @@ def vast_xmatch_qc(
     psf: Optional[Tuple[float, float]] = None,
     verbose: bool = False,
     aegean: bool = False,
-    positional_unit: str = "arcsec",
-    flux_unit: str = "mJy",
+    positional_unit: Union[str, u.Unit] = "arcsec",
+    flux_unit: Union[str, u.Unit] = "mJy",
     csv_output: Optional[Union[Path, str]] = None,
+    sqlite_output: Optional[Union[Path, str]] = None,
     plot_path: Optional[Union[Path, str]] = None,
     plot_pos_gridsize: int = 50,
 ):
@@ -199,7 +212,11 @@ def vast_xmatch_qc(
         psf_reference = None
     if isinstance(psf, tuple) and len(psf) == 0:
         psf = None
-    flux_unit /= u.beam
+    if isinstance(positional_unit, str):
+        positional_unit = u.Unit(positional_unit)
+    if isinstance(flux_unit, str):
+        flux_unit = u.Unit(flux_unit)
+    flux_unit /= u.beam  # add beam divisor as we currently only work with peak fluxes
 
     reference_catalog = Catalog(
         reference_catalog_path, psf=psf_reference, condon=condon
@@ -211,10 +228,13 @@ def vast_xmatch_qc(
         input_format="aegean" if aegean else "selavy",
     )
 
-    # CSV output requires the catalogs to follow VAST naming conventions
-    if csv_output is not None and (catalog.field is None or catalog.epoch is None):
+    # CSV/SQLite output requires the catalogs to follow VAST naming conventions
+    if (csv_output is not None or sqlite_output is not None) and (
+        catalog.field is None or catalog.epoch is None
+    ):
         e = UnknownFilenameConvention(
-            f"Unknown catalog filename convention: {catalog.path}. CSV output is unavailable."
+            f"Unknown catalog filename convention: {catalog.path}. "
+            "Correction output is unavailable."
         )
         logger.error(e)
         raise SystemExit(e)
@@ -257,40 +277,66 @@ def vast_xmatch_qc(
         "ODR fit parameters: Sp = Sp,ref * %s + %s %s.", ugradient, uoffset, flux_unit
     )
 
-    if csv_output is not None:
-        csv_output = Path(csv_output)  # ensure Path object
-        sbid = catalog.sbid if catalog.sbid is not None else ""
-        if not csv_output.exists():
-            f = open(csv_output, "w")
-            print(
-                (
+    if csv_output is not None or sqlite_output is not None:
+        # output has been requested
+        flux_corr_mult = 1 / ugradient
+        flux_corr_add = -1 * uoffset
+        if csv_output is not None:
+            csv_output = Path(csv_output)  # ensure Path object
+            sbid = catalog.sbid if catalog.sbid is not None else ""
+            if not csv_output.exists():
+                f = open(csv_output, "w")
+                print(
                     "field,release_epoch,sbid,ra_correction,dec_correction,ra_madfm,"
                     "dec_madfm,flux_peak_correction_multiplicative,flux_peak_correction_additive,"
-                    "flux_peak_correction_multiplicative_err,flux_peak_correction_additive_err"
+                    "flux_peak_correction_multiplicative_err,flux_peak_correction_additive_err",
+                    file=f,
+                )
+            else:
+                f = open(csv_output, "a")
+            logger.info(
+                "Writing corrections CSV. To correct positions, add the corrections to "
+                "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
+                "correct fluxes, add the additive correction and multiply the result by the "
+                "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
+                "(S + flux_peak_correction_additive)."
+            )
+            print(
+                (
+                    f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
+                    f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
+                    f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
+                    f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
                 ),
                 file=f,
             )
-        else:
-            f = open(csv_output, "a")
-        logger.info(
-            "Writing corrections CSV. To correct positions, add the corrections to "
-            "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
-            "correct fluxes, add the additive correction and multiply the result by the "
-            "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
-            "(S + flux_peak_correction_additive)."
-        )
-        flux_corr_mult = 1 / ugradient
-        flux_corr_add = -1 * uoffset
-        print(
-            (
-                f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
-                f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
-                f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
-                f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
-            ),
-            file=f,
-        )
-        f.close()
+            f.close()
+        if sqlite_output is not None:
+            db.init_database(str(sqlite_output))
+            with db.database:
+                logger.info("Writing corrections to database %s.", sqlite_output)
+                q = db.VastCorrection.replace(
+                    vast_type=catalog.type,
+                    field=catalog.field,
+                    release_epoch=catalog.epoch,
+                    sbid=catalog.sbid,
+                    ra_correction=dra_median.to("deg").value * -1,
+                    dec_correction=ddec_median.to("deg").value * -1,
+                    ra_madfm=dra_madfm.to("deg").value,
+                    dec_madfm=ddec_madfm.to("deg").value,
+                    flux_peak_correction_multiplicative=flux_corr_mult.nominal_value,
+                    flux_peak_correction_additive=(
+                        flux_corr_add.nominal_value * flux_unit
+                    ).to("Jy/beam").value,
+                    flux_peak_correction_multiplicative_err=flux_corr_mult.std_dev,
+                    flux_peak_correction_additive_err=(
+                        flux_corr_add.std_dev * flux_unit
+                    )
+                    .to("Jy/beam")
+                    .value,
+                    n_sources=len(data),
+                )
+                q.execute()
 
     if plot_path is not None:
         plot_path = Path(plot_path)  # ensure Path object

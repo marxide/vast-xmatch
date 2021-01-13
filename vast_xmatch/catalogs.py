@@ -42,6 +42,9 @@ class UnknownCatalogInputFormat(Exception):
 
 
 class Catalog:
+    CATALOG_TYPE_TILE = "TILE"
+    CATALOG_TYPE_COMBINED = "COMBINED"
+
     def __init__(
         self,
         path: Path,
@@ -56,6 +59,7 @@ class Catalog:
         self.sbid: Optional[str]
         self.psf_major: Optional[u.Quantity]
         self.psf_minor: Optional[u.Quantity]
+        self.type: str
 
         # read catalog
         if input_format == "selavy":
@@ -76,7 +80,7 @@ class Catalog:
             self.type, parts = get_vast_filename_parts(self.path)
             self.epoch = parts["epoch"]
             self.field = parts["field"]
-            if self.type == "TILE":
+            if self.type == self.CATALOG_TYPE_TILE:
                 self.sbid = parts["sbid"]
         except UnknownFilenameConvention:
             logger.warning(

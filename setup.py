@@ -16,6 +16,7 @@ setup(
         "matplotlib==3.3.3",
         "numpy==1.19.4",
         "pandas==1.1.5",
+        "peewee==3.14.0",
         "scipy==1.5.4",
         "seaborn==0.11.0",
         "uncertainties==3.1.5",
