@@ -82,6 +82,8 @@ class Catalog:
             self.field = parts["field"]
             if self.type == self.CATALOG_TYPE_TILE:
                 self.sbid = parts["sbid"]
+            else:
+                self.sbid = None
         except UnknownFilenameConvention:
             logger.warning(
                 "Unknown catalog filename convention: %s. PSF lookup will be unavailable.",
