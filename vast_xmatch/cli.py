@@ -62,15 +62,14 @@ ANGLE_QUANTITY_TYPE = AngleQuantityType()
 logger = logging.getLogger("vast_xmatch")
 
 
-def _transform_epoch_raw(epoch: str) -> str:
-    epoch = epoch.replace("EPOCH", "")
-    if epoch.startswith("0"):
-        epoch = epoch.lstrip("0")
-    return epoch
+def transform_epoch_raw(epoch: str) -> str:
+    suffix = "x" if epoch.endswith("x") else ""
+    epoch_num = int(epoch.replace("EPOCH", "").rstrip("x"))
+    return f"{epoch_num}{suffix}"
 
 
 def _transform_epoch_vastp(epoch: str) -> str:
-    return f"vastp{_transform_epoch_raw(epoch)}"
+    return f"vastp{transform_epoch_raw(epoch)}"
 
 
 def _default_none(ctx, param, value):
