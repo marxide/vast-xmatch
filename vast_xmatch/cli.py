@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 from astropy.coordinates import Angle
 import astropy.units as u
@@ -73,6 +73,13 @@ def _transform_epoch_vastp(epoch: str) -> str:
     return f"vastp{_transform_epoch_raw(epoch)}"
 
 
+def _default_none(ctx, param, value):
+    if len(value) == 0:
+        return None
+    else:
+        return value
+
+
 @click.command()
 @click.argument("reference_catalog_path", type=click.Path(exists=True, dir_okay=False))
 @click.argument("catalog_path", type=click.Path(exists=True, dir_okay=False))
@@ -104,7 +111,7 @@ def _transform_epoch_vastp(epoch: str) -> str:
     "--psf-reference",
     nargs=2,
     type=float,
-    required=False,
+    callback=_default_none,
     help=(
         "If using --condon and not using --lookup-psf, use this specified PSF size in "
         "arcsec for `reference_catalog`."
@@ -114,7 +121,7 @@ def _transform_epoch_vastp(epoch: str) -> str:
     "--psf",
     nargs=2,
     type=float,
-    required=False,
+    callback=_default_none,
     help=(
         "If using --condon and not using --lookup-psf, use this specified PSF size in "
         "arcsec for `catalog`."
@@ -185,37 +192,28 @@ def _transform_epoch_vastp(epoch: str) -> str:
     ),
 )
 def vast_xmatch_qc(
-    reference_catalog_path: Union[Path, str],
-    catalog_path: Union[Path, str],
+    reference_catalog_path: str,
+    catalog_path: str,
     radius: Angle = Angle("10arcsec"),
     condon: bool = False,
     psf_reference: Optional[Tuple[float, float]] = None,
     psf: Optional[Tuple[float, float]] = None,
     verbose: bool = False,
     aegean: bool = False,
-    positional_unit: Union[str, u.Unit] = "arcsec",
-    flux_unit: Union[str, u.Unit] = "mJy",
-    csv_output: Optional[Union[Path, str]] = None,
-    sqlite_output: Optional[Union[Path, str]] = None,
-    plot_path: Optional[Union[Path, str]] = None,
+    positional_unit: u.Unit = u.Unit("arcsec"),
+    flux_unit: u.Unit = u.Unit("mJy"),
+    csv_output: Optional[str] = None,
+    sqlite_output: Optional[str] = None,
+    plot_path: Optional[str] = None,
     plot_pos_gridsize: int = 50,
 ):
     if verbose:
         logger.setLevel(logging.DEBUG)
     logger.debug("Set logger to DEBUG.")
 
-    if isinstance(reference_catalog_path, str):
-        reference_catalog_path = Path(reference_catalog_path)
-    if isinstance(catalog_path, str):
-        catalog_path = Path(catalog_path)
-    if isinstance(psf_reference, tuple) and len(psf_reference) == 0:
-        psf_reference = None
-    if isinstance(psf, tuple) and len(psf) == 0:
-        psf = None
-    if isinstance(positional_unit, str):
-        positional_unit = u.Unit(positional_unit)
-    if isinstance(flux_unit, str):
-        flux_unit = u.Unit(flux_unit)
+    # convert catalog path strings to Path objects
+    reference_catalog_path = Path(reference_catalog_path)
+    catalog_path = Path(catalog_path)
     flux_unit /= u.beam  # add beam divisor as we currently only work with peak fluxes
 
     reference_catalog = Catalog(
@@ -282,10 +280,10 @@ def vast_xmatch_qc(
         flux_corr_mult = 1 / ugradient
         flux_corr_add = -1 * uoffset
         if csv_output is not None:
-            csv_output = Path(csv_output)  # ensure Path object
+            csv_output_path = Path(csv_output)  # ensure Path object
             sbid = catalog.sbid if catalog.sbid is not None else ""
-            if not csv_output.exists():
-                f = open(csv_output, "w")
+            if not csv_output_path.exists():
+                f = open(csv_output_path, "w")
                 print(
                     "field,release_epoch,sbid,ra_correction,dec_correction,ra_madfm,"
                     "dec_madfm,flux_peak_correction_multiplicative,flux_peak_correction_additive,"
@@ -293,7 +291,7 @@ def vast_xmatch_qc(
                     file=f,
                 )
             else:
-                f = open(csv_output, "a")
+                f = open(csv_output_path, "a")
             logger.info(
                 "Writing corrections CSV. To correct positions, add the corrections to "
                 "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
@@ -312,7 +310,7 @@ def vast_xmatch_qc(
             )
             f.close()
         if sqlite_output is not None:
-            db.init_database(str(sqlite_output))
+            db.init_database(sqlite_output)
             with db.database:
                 logger.info("Writing corrections to database %s.", sqlite_output)
                 q = db.VastCorrection.replace(
@@ -339,7 +337,7 @@ def vast_xmatch_qc(
                 q.execute()
 
     if plot_path is not None:
-        plot_path = Path(plot_path)  # ensure Path object
+        plot_path_path = Path(plot_path)  # ensure Path object
         title: Optional[str] = None
         if (
             catalog.field
@@ -359,7 +357,7 @@ def vast_xmatch_qc(
             hex_gridsize=plot_pos_gridsize,
         )
         g_pos_offset.savefig(
-            plot_path / f"{catalog.path.stem}_positional_offset.png",
+            plot_path_path / f"{catalog.path.stem}_positional_offset.png",
             bbox_inches="tight",
         )
 
@@ -370,6 +368,6 @@ def vast_xmatch_qc(
             fit_params=(gradient, offset, gradient_err, offset_err),
         )
         ax_flux_ratio.figure.savefig(
-            plot_path / f"{catalog.path.stem}_flux_ratio.png",
+            plot_path_path / f"{catalog.path.stem}_flux_ratio.png",
             bbox_inches="tight",
         )
