@@ -9,7 +9,7 @@ from typing import Optional
 
 import pandas as pd
 from vast_xmatch.cli import vast_xmatch_qc, transform_epoch_raw
-from vast_xmatch.catalogs import get_vast_filename_parts
+from vast_xmatch.catalogs import Catalog, get_vast_filename_parts
 
 
 VAST_DATA_ROOT = Path("/raid-17/LS/kaplan/VAST")
@@ -42,6 +42,8 @@ def qc(args):
 
 def find_reference_for_catalog(catalog: Path) -> Optional[Path]:
     vast_type, parts = get_vast_filename_parts(catalog)
+    if vast_type == Catalog.CATALOG_TYPE_TILE:
+        vast_type += "S"
     reference_catalog: Optional[Path]
     try:
         reference_catalog = list(
