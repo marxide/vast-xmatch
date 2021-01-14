@@ -217,7 +217,7 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
         filename = Path(filename)
     pattern_combined = re.compile(
         r"^(?P<field>(?:RACS|VAST)_\d{4}[+-]\d{2}\w)\.(?P<epoch>EPOCH\d{2}x?)\."
-        r"(?P<stokes>[IQUV])\.components$"
+        r"(?P<stokes>[IQUV])\.selavy\.components$"
     )
     pattern_tile = re.compile(
         r"^selavy-image\.(?P<stokes>[iquv])\.SB(?P<sbid>\d+)\.cont\."
