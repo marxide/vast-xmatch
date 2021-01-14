@@ -234,6 +234,27 @@ def get_psf_size_from_metadata_server(field: str, epoch: str) -> Tuple[float, fl
 
 
 def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, str]]:
+    """Inspect a VAST catalog filename and return the VAST catalog type and a dict
+    containing the identified parts.
+
+    Parameters
+    ----------
+    filename : Union[Path, str]
+        Path to the VAST catalog. Must match the VAST release naming conventions, otherwise
+        an `UnknownFilenameConvention` exception will be raised.
+
+    Returns
+    -------
+    Tuple[str, Dict[str, str]]
+        Tuple containing the VAST catalog type (i.e. TILE or COMBINED), and a dict of the
+        identified parts with keys: field, epoch, stokes. The sbid is also included for
+        TILE catalogs only.
+
+    Raises
+    ------
+    UnknownFilenameConvention
+        When `filename` fails to match either the COMBINED or TILE naming convention.
+    """
     if isinstance(filename, str):
         filename = Path(filename)
     pattern_combined = re.compile(
@@ -250,7 +271,7 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
     if match:
         logger.debug("Using COMBINED image filename convention regex pattern.")
         logger.debug("Parts: %s", match.groupdict())
-        return "COMBINED", match.groupdict()
+        return Catalog.CATALOG_TYPE_COMBINED, match.groupdict()
 
     match = pattern_tile.match(filename.stem)
     if match:
@@ -268,7 +289,7 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
                 f"the provided path: {filename}."
             )
         logger.debug("Parts: %s", tile_parts)
-        return "TILE", tile_parts
+        return Catalog.CATALOG_TYPE_TILE, tile_parts
 
     raise UnknownFilenameConvention(
         f"Failed to identify the filename convention for {filename.name}."
