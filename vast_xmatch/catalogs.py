@@ -55,6 +55,7 @@ class Catalog:
         psf: Optional[Tuple[float, float]] = None,
         input_format: str = "selavy",
         condon: bool = False,
+        positive_fluxes_only: bool = True,
     ):
         self.path: Path
         self.table: QTable
@@ -78,6 +79,21 @@ class Catalog:
             )
         self.path = path
         self.table = read_catalog(path)
+
+        # filter sources with bad sizes and optionally negative/0 fluxes
+        if positive_fluxes_only:
+            logger.info(
+                "Filtering %d sources with fluxes <= 0.",
+                (self.table["flux_peak"] <= 0).sum(),
+            )
+            self.table = self.table[self.table["flux_peak"] > 0]
+        logger.info(
+            "Filtering %d sources with fitted sizes <= 0.",
+            ((self.table["maj_axis"] <= 0) | (self.table["min_axis"] <= 0)).sum(),
+        )
+        self.table = self.table[
+            (self.table["maj_axis"] > 0) & (self.table["min_axis"] > 0)
+        ]
 
         # get field and epoch from filename
         try:
