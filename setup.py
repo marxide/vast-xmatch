@@ -24,5 +24,6 @@ setup(
     entry_points="""
         [console_scripts]
         vast_xmatch_qc=vast_xmatch.cli:vast_xmatch_qc
+        vast_xmatch_export=vast_xmatch.cli:vast_xmatch_export
     """,
 )

@@ -287,7 +287,8 @@ def vast_xmatch_qc(
                 print(
                     "field,release_epoch,sbid,ra_correction,dec_correction,ra_madfm,"
                     "dec_madfm,flux_peak_correction_multiplicative,flux_peak_correction_additive,"
-                    "flux_peak_correction_multiplicative_err,flux_peak_correction_additive_err",
+                    "flux_peak_correction_multiplicative_err,flux_peak_correction_additive_err,"
+                    "n_sources",
                     file=f,
                 )
             else:
@@ -304,7 +305,7 @@ def vast_xmatch_qc(
                     f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
                     f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
                     f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
-                    f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev}"
+                    f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev},{len(data)}"
                 ),
                 file=f,
             )
@@ -325,7 +326,9 @@ def vast_xmatch_qc(
                     flux_peak_correction_multiplicative=flux_corr_mult.nominal_value,
                     flux_peak_correction_additive=(
                         flux_corr_add.nominal_value * flux_unit
-                    ).to("Jy/beam").value,
+                    )
+                    .to("Jy/beam")
+                    .value,
                     flux_peak_correction_multiplicative_err=flux_corr_mult.std_dev,
                     flux_peak_correction_additive_err=(
                         flux_corr_add.std_dev * flux_unit
@@ -371,3 +374,44 @@ def vast_xmatch_qc(
             plot_path_path / f"{catalog.path.stem}_flux_ratio.png",
             bbox_inches="tight",
         )
+
+
+@click.command(help="Export the contents of a SQLite database of VAST corrections to a CSV file.")
+@click.argument(
+    "database-path",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.argument(
+    "csv-path",
+    type=click.Path(dir_okay=False, writable=True),
+)
+@click.option("--vast-type", type=click.Choice(Catalog.CATALOG_TYPES), default=None)
+@click.option(
+    "--positional-unit",
+    type=ANGLE_UNIT_TYPE,
+    default="arcsec",
+    help="Positional correction output unit. Must be an angular unit. Default is arcsec.",
+)
+@click.option(
+    "--flux-unit",
+    type=FLUX_UNIT_TYPE,
+    default="mJy",
+    help=(
+        "Flux correction output unit. Must be a spectral flux density unit. Do not "
+        "include a beam divisor, this will be automatically added for peak flux values. "
+        "Default is mJy."
+    ),
+)
+@click.option("-v", "--verbose", is_flag=True)
+def vast_xmatch_export(
+    database_path: str,
+    csv_path: str,
+    vast_type: Optional[str],
+    positional_unit: u.Unit,
+    flux_unit: u.Unit,
+    verbose: bool = False,
+):
+    if verbose:
+        logger.setLevel(logging.DEBUG)
+    db.init_database(database_path)
+    db.export_csv(csv_path, vast_type, positional_unit, flux_unit)
