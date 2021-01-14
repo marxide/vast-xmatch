@@ -124,10 +124,9 @@ class Catalog:
     @property
     def epoch_raw(self) -> Optional[str]:
         if self.epoch:
-            epoch = self.epoch.replace("EPOCH", "")
-            if epoch.startswith("0"):
-                epoch = epoch.lstrip("0")
-            return epoch
+            suffix = "x" if self.epoch.endswith("x") else ""
+            epoch = int(self.epoch.replace("EPOCH", "").rstrip("x"))
+            return f"{epoch}{suffix}"
         else:
             return self.epoch
 
