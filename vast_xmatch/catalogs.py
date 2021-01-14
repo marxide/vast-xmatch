@@ -44,6 +44,10 @@ class UnknownCatalogInputFormat(Exception):
 class Catalog:
     CATALOG_TYPE_TILE = "TILE"
     CATALOG_TYPE_COMBINED = "COMBINED"
+    CATALOG_TYPES = (
+        CATALOG_TYPE_TILE,
+        CATALOG_TYPE_COMBINED,
+    )
 
     def __init__(
         self,

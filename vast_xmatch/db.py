@@ -7,13 +7,8 @@ database = peewee.SqliteDatabase(None)
 
 
 class VastCorrection(peewee.Model):
-    VAST_TYPE_TILE = Catalog.CATALOG_TYPE_TILE
-    VAST_TYPE_COMBINED = Catalog.CATALOG_TYPE_COMBINED
-    VAST_TYPE_CHOICES = (
         # (database value, display value)
-        (VAST_TYPE_TILE, "TILE"),
-        (VAST_TYPE_COMBINED, "COMBINED"),
-    )
+    VAST_TYPE_CHOICES = tuple([(t, t) for t in Catalog.CATALOG_TYPES])
 
     vast_type = peewee.CharField(max_length=15, choices=VAST_TYPE_CHOICES)
     field = peewee.CharField(
