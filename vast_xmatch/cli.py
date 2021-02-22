@@ -33,21 +33,21 @@ class _AstropyUnitType(click.ParamType):
 
 
 class AngleUnitType(_AstropyUnitType):
-    name = "angle unit"
+    name = "angle_unit"
 
     def convert(self, value, param, ctx):
         return super().convert(value, param, ctx, "angle")
 
 
 class FluxUnitType(_AstropyUnitType):
-    name = "flux unit"
+    name = "flux_unit"
 
     def convert(self, value, param, ctx):
         return super().convert(value, param, ctx, "spectral flux density")
 
 
 class AngleQuantityType(click.ParamType):
-    name = "angle quantity"
+    name = "angle_quantity"
 
     def convert(self, value, param, ctx):
         try:
@@ -80,7 +80,19 @@ def _default_none(ctx, param, value):
         return value
 
 
-@click.command()
+@click.group()
+def cli():
+    pass
+
+
+@cli.command(
+    name="qc",
+    help=(
+        "Crossmatch a catalog with a reference catalog and output the positional and"
+        " flux corrections for the input catalog."
+    ),
+    short_help="Crossmatch and output positional and flux corrections.",
+)
 @click.argument("reference_catalog_path", type=click.Path(exists=True, dir_okay=False))
 @click.argument("catalog_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
@@ -384,8 +396,10 @@ def vast_xmatch_qc(
         )
 
 
-@click.command(
-    help="Export the contents of a SQLite database of VAST corrections to a CSV file."
+@cli.command(
+    name="export",
+    help="Export the contents of a SQLite database of VAST corrections to a CSV file.",
+    short_help="Export database corrections to CSV.",
 )
 @click.argument(
     "database-path",
