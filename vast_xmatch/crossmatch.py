@@ -102,6 +102,10 @@ def calculate_positional_offsets(
 
 def calculate_flux_offsets(
     xmatch_qt: QTable,
+    init_m: float = 1.0,
+    init_b: float = 0.0,
+    fix_m: bool = False,
+    fix_b: bool = False,
 ) -> Tuple[float, u.Quantity, float, u.Quantity]:
     """Calculate the gradient and offset of a straight-line fit to the peak fluxes for
     crossmatched sources. The function `y = mx + b` is fit to the reference peak fluxes
@@ -112,6 +116,14 @@ def calculate_flux_offsets(
     xmatch_qt : QTable
         QTable of crossmatched sources. Must contain columns: flux_peak,
         flux_peak_reference, flux_peak_err, flux_peak_err_reference.
+    init_m : float
+        Initial gradient parameter passed to the fitting function, default 1.0.
+    init_b : float
+        Initial offset parameter passed to the fitting function, default 0.0.
+    fix_m : bool
+        If True, do not allow the gradient to vary during fitting, default False.
+    fix_b : bool
+        If True, do not allow the offest to vary during fitting, default False.
 
     Returns
     -------
@@ -120,6 +132,7 @@ def calculate_flux_offsets(
         intercept error. Offset and offset error unit match the reference flux peak
         input and are of spectral flux density type.
     """
+    ifixb = [0 if fix_m else 1, 0 if fix_b else 1]
     flux_unit = xmatch_qt["flux_peak_reference"].unit
     linear_model = odr.Model(straight_line)
     # convert all to reference flux unit as ODR does not preserve Quantity objects
@@ -129,7 +142,7 @@ def calculate_flux_offsets(
         sx=xmatch_qt["flux_peak_err_reference"].to(flux_unit).value,
         sy=xmatch_qt["flux_peak_err"].to(flux_unit).value,
     )
-    odr_obj = odr.ODR(odr_data, linear_model, beta0=[1.0, 0.0])
+    odr_obj = odr.ODR(odr_data, linear_model, beta0=[init_m, init_b], ifixb=ifixb)
     odr_out = odr_obj.run()
     gradient, offset = odr_out.beta
     gradient_err, offset_err = odr_out.sd_beta

@@ -126,6 +126,8 @@ def _default_none(ctx, param, value):
         "arcsec for `catalog`."
     ),
 )
+@click.option("--fix-m", is_flag=True, help="Fix the gradient to 1.0 when fitting.")
+@click.option("--fix-b", is_flag=True, help="Fix the offset to 0.0 when fitting.")
 @click.option("-v", "--verbose", is_flag=True)
 @click.option("--aegean", is_flag=True, help="Input catalog is an Aegean CSV.")
 @click.option(
@@ -197,6 +199,8 @@ def vast_xmatch_qc(
     condon: bool = False,
     psf_reference: Optional[Tuple[float, float]] = None,
     psf: Optional[Tuple[float, float]] = None,
+    fix_m: bool = False,
+    fix_b: bool = False,
     verbose: bool = False,
     aegean: bool = False,
     positional_unit: u.Unit = u.Unit("arcsec"),
@@ -267,7 +271,9 @@ def vast_xmatch_qc(
         positional_unit,
     )
 
-    gradient, offset, gradient_err, offset_err = calculate_flux_offsets(data)
+    gradient, offset, gradient_err, offset_err = calculate_flux_offsets(
+        data, fix_m=fix_m, fix_b=fix_b
+    )
     ugradient = ufloat(gradient, gradient_err)
     uoffset = ufloat(offset.to(flux_unit).value, offset_err.to(flux_unit).value)
     logger.info(
