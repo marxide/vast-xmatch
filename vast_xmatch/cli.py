@@ -25,7 +25,8 @@ class _AstropyUnitType(click.ParamType):
             self.fail(f"astropy.units.Unit does not understand: {value}.")
         if unit.physical_type != unit_physical_type:
             self.fail(
-                f"{unit} is a {unit.physical_type} unit. It must be of type {unit_physical_type}."
+                f"{unit} is a {unit.physical_type} unit. It must be of type"
+                f" {unit_physical_type}."
             )
         else:
             return unit
@@ -134,53 +135,56 @@ def _default_none(ctx, param, value):
     "--positional-unit",
     type=ANGLE_UNIT_TYPE,
     default="arcsec",
-    help="Positional correction output unit. Must be an angular unit. Default is arcsec.",
+    help=(
+        "Positional correction output unit. Must be an angular unit. Default is arcsec."
+    ),
 )
 @click.option(
     "--flux-unit",
     type=FLUX_UNIT_TYPE,
     default="mJy",
     help=(
-        "Flux correction output unit. Must be a spectral flux density unit. Do not "
-        "include a beam divisor, this will be automatically added for peak flux values. "
-        "Default is mJy."
+        "Flux correction output unit. Must be a spectral flux density unit. Do not"
+        " include a beam divisor, this will be automatically added for peak flux"
+        " values. Default is mJy."
     ),
 )
 @click.option(
     "--csv-output",
     type=click.Path(dir_okay=False, writable=True),
     help=(
-        "Path to write CSV of positional and flux corrections. Only available if "
-        "`catalog` follows VAST naming conventions as the field and epoch must be known. "
-        "If the file exists, the corrections will be appended. Corrections are written "
-        "in the units specified by --positional-unit and --flux-unit. To apply the "
-        "corrections, use the following equations: ra corrected = ra + ra_correction / "
-        "cos(dec); dec corrected = dec + dec_correction; flux peak corrected = "
-        "flux_peak_correction_multiplicative * (flux peak + flux_peak_correction_additive. "
-        "Note that these correction values have been modified to suit these equations "
-        "and are different from the fitted values shown in the logs."
+        "Path to write CSV of positional and flux corrections. Only available if"
+        " `catalog` follows VAST naming conventions as the field and epoch must be"
+        " known. If the file exists, the corrections will be appended. Corrections are"
+        " written in the units specified by --positional-unit and --flux-unit. To apply"
+        " the corrections, use the following equations: ra corrected = ra +"
+        " ra_correction / cos(dec); dec corrected = dec + dec_correction; flux peak"
+        " corrected = flux_peak_correction_multiplicative * (flux peak +"
+        " flux_peak_correction_additive. Note that these correction values have been"
+        " modified to suit these equations and are different from the fitted values"
+        " shown in the logs."
     ),
 )
 @click.option(
     "--sqlite-output",
     type=click.Path(dir_okay=False, file_okay=True),
     help=(
-        "Write corrections to the given SQLite3 database. Will create the database if "
-        "it doesn't exist and replace existing corrections for matching catalogs. See "
-        "the help for --csv-output for more information on the correction values. "
-        "However, unlike the CSV output, the positional unit for the database is always "
-        "degrees and the flux unit is always Jy[/beam]."
+        "Write corrections to the given SQLite3 database. Will create the database if"
+        " it doesn't exist and replace existing corrections for matching catalogs. See"
+        " the help for --csv-output for more information on the correction values."
+        " However, unlike the CSV output, the positional unit for the database is"
+        " always degrees and the flux unit is always Jy[/beam]."
     ),
 )
 @click.option(
     "--plot-path",
     type=click.Path(),
     help=(
-        "Save plots of the crossmatched sources positional offsets and flux ratios as a "
-        "PNG image to the given directory. If the directory does not exist, it will be "
-        "created. The axis units are specified by --positional-unit and --flux-unit. "
-        "The output filenames will be the name of the input catalog with the suffix "
-        "_positional_offset.png and _flux_ratio.png."
+        "Save plots of the crossmatched sources positional offsets and flux ratios as a"
+        " PNG image to the given directory. If the directory does not exist, it will be"
+        " created. The axis units are specified by --positional-unit and --flux-unit."
+        " The output filenames will be the name of the input catalog with the suffix"
+        " _positional_offset.png and _flux_ratio.png."
     ),
 )
 @click.option(
@@ -299,19 +303,18 @@ def vast_xmatch_qc(
             else:
                 f = open(csv_output_path, "a")
             logger.info(
-                "Writing corrections CSV. To correct positions, add the corrections to "
-                "the original source positions i.e. RA' = RA + ra_correction / cos(Dec). To "
-                "correct fluxes, add the additive correction and multiply the result by the "
-                "multiplicative correction i.e. S' = flux_peak_correction_multiplicative"
-                "(S + flux_peak_correction_additive)."
+                "Writing corrections CSV. To correct positions, add the corrections to"
+                " the original source positions i.e. RA' = RA + ra_correction /"
+                " cos(Dec). To correct fluxes, add the additive correction and multiply"
+                " the result by the multiplicative correction i.e. S' ="
+                " flux_peak_correction_multiplicative(S +"
+                " flux_peak_correction_additive)."
             )
             print(
-                (
-                    f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
-                    f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
-                    f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
-                    f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev},{len(data)}"
-                ),
+                f"{catalog.field},{catalog.epoch},{sbid},{dra_median_value * -1},"
+                f"{ddec_median_value * -1},{dra_madfm_value},{ddec_madfm_value},"
+                f"{flux_corr_mult.nominal_value},{flux_corr_add.nominal_value},"
+                f"{flux_corr_mult.std_dev},{flux_corr_add.std_dev},{len(data)}",
                 file=f,
             )
             f.close()
@@ -381,7 +384,9 @@ def vast_xmatch_qc(
         )
 
 
-@click.command(help="Export the contents of a SQLite database of VAST corrections to a CSV file.")
+@click.command(
+    help="Export the contents of a SQLite database of VAST corrections to a CSV file."
+)
 @click.argument(
     "database-path",
     type=click.Path(exists=True, dir_okay=False),
@@ -395,16 +400,18 @@ def vast_xmatch_qc(
     "--positional-unit",
     type=ANGLE_UNIT_TYPE,
     default="arcsec",
-    help="Positional correction output unit. Must be an angular unit. Default is arcsec.",
+    help=(
+        "Positional correction output unit. Must be an angular unit. Default is arcsec."
+    ),
 )
 @click.option(
     "--flux-unit",
     type=FLUX_UNIT_TYPE,
     default="mJy",
     help=(
-        "Flux correction output unit. Must be a spectral flux density unit. Do not "
-        "include a beam divisor, this will be automatically added for peak flux values. "
-        "Default is mJy."
+        "Flux correction output unit. Must be a spectral flux density unit. Do not"
+        " include a beam divisor, this will be automatically added for peak flux"
+        " values. Default is mJy."
     ),
 )
 @click.option("-v", "--verbose", is_flag=True)
