@@ -241,4 +241,5 @@ def flux_ratio_plot(
         color="0.7",
     )
     ax_resid.axhline(y=1.0, color="black", linestyle="dotted", linewidth=1)
+    ax_resid.set_ylabel(r"$S_{\mathrm{p}}$ ratio residual")
     return ax

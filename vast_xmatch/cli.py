@@ -370,7 +370,7 @@ def vast_xmatch_qc(
         ):
             title = (
                 f"{catalog.field}.{catalog.epoch} X {reference_catalog.field}."
-                f"{reference_catalog.epoch}"
+                f"{reference_catalog.epoch} (ref)"
             )
         g_pos_offset = positional_offset_plot(
             data,
