@@ -264,7 +264,7 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
     pattern_tile = re.compile(
         r"^selavy-image\.(?P<stokes>[iquv])\.SB(?P<sbid>\d+)\.cont\."
         r"(?P<field>(?:RACS|VAST)_\d{4}[+-]\d{2}\w)\.linmos\.taylor\.0\.restored\."
-        r"components$"
+        r"(?:.+?\.)?components$"
     )
 
     match = pattern_combined.match(filename.stem)
