@@ -361,6 +361,7 @@ def vast_xmatch_qc(
 
     if plot_path is not None:
         plot_path_path = Path(plot_path)  # ensure Path object
+        plot_path_path.mkdir(parents=True, exist_ok=True)
         title: Optional[str] = None
         if (
             catalog.field
