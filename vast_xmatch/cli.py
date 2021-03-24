@@ -236,7 +236,10 @@ def vast_xmatch_qc(
     flux_unit /= u.beam  # add beam divisor as we currently only work with peak fluxes
 
     reference_catalog = Catalog(
-        reference_catalog_path, psf=psf_reference, condon=condon
+        reference_catalog_path,
+        psf=psf_reference,
+        condon=condon,
+        input_format="aegean" if aegean else "selavy",
     )
     catalog = Catalog(
         catalog_path,
