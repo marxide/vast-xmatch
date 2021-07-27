@@ -261,39 +261,46 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
         r"^(?P<field>(?:RACS|VAST)_\d{4}[+-]\d{2}\w)\.(?P<epoch>EPOCH\d{2}x?)\."
         r"(?P<stokes>[IQUV])\.selavy\.components$"
     )
-    pattern_tile = re.compile(
-        r"^selavy-image\.(?P<stokes>[iquv])\.SB(?P<sbid>\d+)\.cont\."
-        r"(?P<field>(?:RACS|VAST)_\d{4}[+-]\d{2}\w)\.linmos\.taylor\.0\.restored\."
-        r"(?:.+?\.)?components$"
-    )
 
+    # COMBINED files are assumed to follow the naming convention below as they are VAST
+    # data products, not directly from ASKAPsoft/CASDA.
     match = pattern_combined.match(filename.stem)
     if match:
         logger.debug("Using COMBINED image filename convention regex pattern.")
         logger.debug("Parts: %s", match.groupdict())
         return Catalog.CATALOG_TYPE_COMBINED, match.groupdict()
 
-    match = pattern_tile.match(filename.stem)
-    if match:
-        logger.debug("Using TILE image filename convention regex pattern")
-        tile_parts = match.groupdict()
-        # try to get the epoch from the full path
-        for path_part in filename.parts:
-            if path_part.startswith("EPOCH"):
-                tile_parts["epoch"] = path_part
-                break
+    # TILE file matching pattern needs to be more flexible as the naming convention used
+    # by ASKAPsoft/CASDA has changed over the course of the VAST survey.
+    tile_part_patterns = {
+        "stokes": r"\.([iquv])\.",
+        "sbid": r"SB(\d+)",
+        "field": r"((?:RACS|VAST)_[\w\-\+]+)",
+    }
+    tile_parts = {}
+    for part_name, part_pattern in tile_part_patterns.items():
+        match = re.search(part_pattern, filename.stem)
+        if match:
+            tile_parts[part_name] = match.group(1)
         else:
-            # EPOCH wasn't in any of the path parts
             raise UnknownFilenameConvention(
-                f"{filename.name} appears to be a TILE image but the epoch is not in "
-                f"the provided path: {filename}."
+                f"Failed to identify {part_name} from {filename.name}."
             )
-        logger.debug("Parts: %s", tile_parts)
-        return Catalog.CATALOG_TYPE_TILE, tile_parts
 
-    raise UnknownFilenameConvention(
-        f"Failed to identify the filename convention for {filename.name}."
-    )
+    logger.debug("Using TILE image filename convention regex pattern")
+    # try to get the epoch from the full path
+    for path_part in filename.parts:
+        if path_part.startswith("EPOCH"):
+            tile_parts["epoch"] = path_part
+            break
+    else:
+        # EPOCH wasn't in any of the path parts
+        raise UnknownFilenameConvention(
+            f"{filename.name} appears to be a TILE image but the epoch is not in "
+            f"the provided path: {filename}."
+        )
+    logger.debug("Parts: %s", tile_parts)
+    return Catalog.CATALOG_TYPE_TILE, tile_parts
 
 
 def read_selavy(catalog_path: Path) -> QTable:
