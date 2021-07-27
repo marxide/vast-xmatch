@@ -68,8 +68,12 @@ class Catalog:
 
         # read catalog
         if input_format == "selavy":
-            logger.debug("Reading %s as a Selavy catalog.", path)
-            read_catalog = read_selavy
+            if path.suffix == ".txt":
+                logger.debug("Reading %s as a Selavy txt catalog.", path)
+                read_catalog = read_selavy
+            else:
+                logger.debug("Reading %s as a Selavy VOTable catalog.", path)
+                read_catalog = read_selavy_votable
         elif input_format == "aegean":
             logger.debug("Reading %s as an Aegean catalog.", path)
             read_catalog = read_aegean_csv
@@ -339,7 +343,7 @@ def read_selavy(catalog_path: Path) -> QTable:
 
 
 def read_selavy_votable(catalog_path: Path) -> QTable:
-    qt = QTable.read(catalog_path, format="votable")
+    qt = QTable.read(catalog_path, format="votable", use_names_over_ids=True)
     qt["coord"] = SkyCoord(ra=qt["ra_deg_cont"], dec=qt["dec_deg_cont"])
     _, qt["nn_separation"], _ = qt["coord"].match_to_catalog_sky(
         qt["coord"], nthneighbor=2
