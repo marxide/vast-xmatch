@@ -104,10 +104,12 @@ class Catalog:
                 self.sbid = parts["sbid"]
             else:
                 self.sbid = None
-        except UnknownFilenameConvention:
+        except UnknownFilenameConvention as e:
             logger.warning(
-                "Unknown catalog filename convention: %s. PSF lookup will be unavailable.",
+                "Unknown catalog filename convention: %s. PSF lookup will be"
+                " unavailable due to the following error: %s",
                 self.path,
+                e,
             )
             self.epoch = None
             self.field = None
