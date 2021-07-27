@@ -5,7 +5,7 @@ from typing import Tuple, Union, Dict, Optional
 from urllib.parse import quote
 
 from astropy.coordinates import SkyCoord
-from astropy.table import QTable, join
+from astropy.table import Table, QTable, join
 import astropy.units as u
 import numpy as np
 import pandas as pd
@@ -343,7 +343,14 @@ def read_selavy(catalog_path: Path) -> QTable:
 
 
 def read_selavy_votable(catalog_path: Path) -> QTable:
-    qt = QTable.read(catalog_path, format="votable", use_names_over_ids=True)
+    t = Table.read(catalog_path, format="votable", use_names_over_ids=True)
+    # remove units from str columns and fix unrecognized flux units
+    for col in t.itercols():
+        if col.dtype.kind == "U":
+            col.unit = None
+        elif col.unit == u.UnrecognizedUnit("mJy/beam"):
+            col.unit = u.Unit("mJy/beam")
+    qt = QTable(t)
     qt["coord"] = SkyCoord(ra=qt["ra_deg_cont"], dec=qt["dec_deg_cont"])
     _, qt["nn_separation"], _ = qt["coord"].match_to_catalog_sky(
         qt["coord"], nthneighbor=2
