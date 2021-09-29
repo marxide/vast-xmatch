@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "vast-xmatch"
-version = "0.2.2"
+version = "0.3.0"
 description = "Python package for internal crossmatching of VAST catalogues."
 authors = ["Andrew O'Brien <obrienan@uwm.edu>"]
 license = "MIT"

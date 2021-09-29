@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 from astropy.coordinates import Angle
 import astropy.units as u
 import click
+import pandas as pd
 from uncertainties import ufloat
 
 from vast_xmatch.catalogs import Catalog, UnknownFilenameConvention
@@ -115,8 +116,15 @@ def cli():
         "TILES/STOKESI_SELAVY/selavy-image.i.SB9667.cont.VAST_0102-06A.linmos.taylor.0"
         ".restored.components.txt. Note that for TILE images, the epoch is determined "
         "from the full path. If the input catalogs do not follow this convention, then "
-        "the PSF sizes must be supplied using --psf-reference and/or --psf. The "
-        "deafult behaviour is to lookup the PSF sizes from the VAST metadata server."
+        "the PSF sizes must be supplied using --psf-reference and/or --psf."
+    ),
+)
+@click.option(
+    "--askap-database",
+    type=click.Path(exists=True, dir_okay=True, file_okay=False),
+    help=(
+        "Path to a local copy of the ASKAP surveys database repository. Required if"
+        " using --condon without also specifying the PSF sizes with --psf."
     ),
 )
 @click.option(
@@ -125,8 +133,8 @@ def cli():
     type=float,
     callback=_default_none,
     help=(
-        "If using --condon and not using --lookup-psf, use this specified PSF size in "
-        "arcsec for `reference_catalog`."
+        "If using --condon, use this specified PSF size in arcsec for"
+        " `reference_catalog`."
     ),
 )
 @click.option(
@@ -135,8 +143,8 @@ def cli():
     type=float,
     callback=_default_none,
     help=(
-        "If using --condon and not using --lookup-psf, use this specified PSF size in "
-        "arcsec for `catalog`."
+        "If using --condon and not using --askap-database, use this specified PSF size"
+        " in arcsec for `catalog`."
     ),
 )
 @click.option("--fix-m", is_flag=True, help="Fix the gradient to 1.0 when fitting.")
@@ -213,6 +221,7 @@ def vast_xmatch_qc(
     catalog_path: str,
     radius: Angle = Angle("10arcsec"),
     condon: bool = False,
+    askap_database: Optional[Path] = None,
     psf_reference: Optional[Tuple[float, float]] = None,
     psf: Optional[Tuple[float, float]] = None,
     fix_m: bool = False,
@@ -233,7 +242,29 @@ def vast_xmatch_qc(
     # convert catalog path strings to Path objects
     reference_catalog_path = Path(reference_catalog_path)
     catalog_path = Path(catalog_path)
-    flux_unit /= u.beam  # add beam divisor as we currently only work with peak fluxes
+    # add beam divisor as we currently only work with peak fluxes
+    flux_unit /= u.beam
+    # get the PSF
+    if askap_database is not None:
+        obs_df = pd.DataFrame()
+        for field_data_path in Path(askap_database).glob("epoch_*/field_data.csv"):
+            df = pd.read_csv(field_data_path)
+            obs_df = obs_df.append(df)
+        racs_df = pd.read_csv(Path(askap_database).parent.parent / "racs/db/epoch_0/field_data.csv")
+        racs_df["FIELD_NAME"] = racs_df.FIELD_NAME.str.replace("RACS_", "VAST_")
+        obs_df = obs_df.append(racs_df)
+        obs_df = obs_df.set_index(["FIELD_NAME", "SBID"]).sort_index()
+
+        if psf is None:
+            _, _, field, sbid, *_ = catalog_path.name.split(".")
+            sbid = int(sbid[2:])
+            obs_data = obs_df.loc[(field, sbid)]
+            psf = (obs_data.PSF_MAJOR, obs_data.PSF_MINOR)
+        if psf_reference is None:
+            _, _, field_ref, sbid_ref, *_ = reference_catalog_path.name.split(".")
+            sbid_ref = int(sbid_ref[2:])
+            obs_data = obs_df.loc[(field_ref, sbid_ref)]
+            psf_reference = (obs_data.PSF_MAJOR, obs_data.PSF_MINOR)
 
     reference_catalog = Catalog(
         reference_catalog_path,
@@ -261,12 +292,31 @@ def vast_xmatch_qc(
 
     # perform the crossmatch
     xmatch_qt = crossmatch_qtables(catalog, reference_catalog, radius=radius)
-    # select xmatches with non-zero flux errors and no siblings
-    logger.info("Removing crossmatched sources with siblings or flux peak errors = 0.")
-    mask = xmatch_qt["flux_peak_err"] > 0
-    mask &= xmatch_qt["flux_peak_err_reference"] > 0
-    mask &= xmatch_qt["has_siblings"] == 0
-    mask &= xmatch_qt["has_siblings_reference"] == 0
+
+    # apply crossmatch filters
+    mask_flux_err = xmatch_qt["flux_peak_err"] > 0
+    mask_flux_err &= xmatch_qt["flux_peak_err_reference"] > 0
+    logger.info(
+        "Removing %d sources with peak flux errors = 0.",
+        len(xmatch_qt) - sum(mask_flux_err),
+    )
+
+    mask_siblings = xmatch_qt["has_siblings"] == 0
+    mask_siblings &= xmatch_qt["has_siblings_reference"] == 0
+    logger.info(
+        "Removing %d sources with siblings.", len(xmatch_qt) - sum(mask_siblings)
+    )
+
+    mask_nn = xmatch_qt["nn_separation"] >= (2.5 * u.arcmin)
+    logger.info(
+        "Removing %d sources with nearest neighbours within 2.5 arcmin.",
+        len(xmatch_qt) - sum(mask_nn),
+    )
+
+    mask_snr = (xmatch_qt["flux_peak"] / xmatch_qt["rms_image"]).decompose() >= 10
+    logger.info("Removing %d sources with SNR < 10.", len(xmatch_qt) - sum(mask_snr))
+
+    mask = mask_flux_err & mask_siblings & mask_nn & mask_snr
     data = xmatch_qt[mask]
     logger.info(
         "%d crossmatched sources remaining (%d%%).",

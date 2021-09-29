@@ -62,6 +62,10 @@ def crossmatch_qtables(
     xmatch["dra"], xmatch["ddec"] = xmatch["coord_reference"].spherical_offsets_to(
         xmatch["coord"]
     )
+    _, xmatch["nn_separation"], _ = xmatch["coord"].match_to_catalog_sky(
+        xmatch["coord"], nthneighbor=2
+    )
+    # compute the peak flux ratio
     xmatch["flux_peak_ratio"] = (
         xmatch["flux_peak"] / xmatch["flux_peak_reference"]
     ).decompose()

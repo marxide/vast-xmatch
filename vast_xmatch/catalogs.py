@@ -296,7 +296,7 @@ def get_vast_filename_parts(filename: Union[Path, str]) -> Tuple[str, Dict[str, 
     logger.debug("Using TILE image filename convention regex pattern")
     # try to get the epoch from the full path
     for path_part in filename.parts:
-        if path_part.startswith("EPOCH"):
+        if path_part.upper().startswith("EPOCH"):
             tile_parts["epoch"] = path_part
             break
     else:
